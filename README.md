@@ -72,6 +72,85 @@ The log says whether the runs converged.
 Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... until 3 runs agree
 (at most 10 runs).
 
+## Example: blue wildebeest, K = 7
+
+This example follows the popgenDK exercise
+[Admixture proportions from called genotypes: blue wildebeest](https://github.com/popgenDK/courses/blob/main/current_exercises/admixture/admixture_called_genotypes_animal.ipynb).
+
+**The data.** 73 blue wildebeest from seven sampling localities; the locality is the first column of the
+`.fam` file.
+
+**How the input was made.** The input `blue_wildebeest_noLD` is made in the exercise from 990,980 called SNPs
+(`blue_wildebeest_thin`). The SNPs are LD-pruned with PCAone, which corrects for population structure:
+
+```
+PCAone -b blue_wildebeest_thin -k 6 -D -o pcaone
+PCAone -B pcaone.residuals -F pcaone.mbim --ld-r2 0.1 --ld-bp 1000000 -o pcaone
+plink --bfile blue_wildebeest_thin --extract pcaone.ld.prune.in --make-bed --out blue_wildebeest_noLD --chr-set 29
+```
+
+This leaves 37,567 SNPs. The data are not included in this repository.
+
+### One run
+
+```
+admixer --seed 1 -j10 -o blue_wildebeest_noLD_admixer blue_wildebeest_noLD.bed 7
+```
+
+This run takes 4 seconds and ends at log-likelihood −2932963.07.
+
+![Admixture proportions, seed 1](docs/blue_wildebeest_noLD_admixer.admix.png)
+
+The fit looks wrong:
+- the W-Serengeti samples are split between two clusters;
+- the three C-Luangwa samples all appear admixed in the same proportions.
+
+The evalAdmix correlation of residuals (`blue_wildebeest_noLD_admixer.7.corres.txt`, written by default)
+confirms it. There are strong positive correlations within C-Luangwa and N-Selous, and negative correlations
+between them and B-Ethosha.
+
+![evalAdmix, seed 1](docs/blue_wildebeest_noLD_admixer.evaladmix.png)
+
+### Several runs with a convergence test
+
+```
+admixer --seed 0 -j10 -o blue_wildebeest_noLD_admixerMult blue_wildebeest_noLD.bed 7 --conv 3
+```
+
+This tries seeds 0, 1, 2, ... until three runs agree with the best run, in 33 seconds.
+`blue_wildebeest_noLD_admixerMult.7.conv` lists the runs, best first:
+
+```
+run  seed  loglik           loglik_diff    max_abs_dQ   ...  agrees
+9    8     -2906767.495807   0.000000      0                 1
+1    0     -2906767.495808  -0.000001      9.53674e-07       1
+6    5     -2906767.495820  -0.000013      2.5034e-05        1
+8    7     -2932625.706040  -25858.210232  0.99993           0
+2    1     -2932817.816830  -26050.321022  0.99993           0
+...
+```
+
+Three of the nine runs reach the same solution, which is 26,000 log-likelihood units better than the seed-1
+run. The output files are those of the best run (seed 8).
+
+![Admixture proportions, best of several runs](docs/blue_wildebeest_noLD_admixerMult.admix.png)
+
+Each locality now has its own ancestry, and the residual correlations are close to zero.
+
+![evalAdmix, best of several runs](docs/blue_wildebeest_noLD_admixerMult.evaladmix.png)
+
+The plots were made with evalAdmix's [`visFuns.R`](https://github.com/GenisGE/evalAdmix):
+
+```r
+source("https://raw.githubusercontent.com/GenisGE/evalAdmix/master/visFuns.R")
+pop <- read.table("blue_wildebeest_noLD.fam")[, 1]
+q <- read.table("blue_wildebeest_noLD_admixerMult.7.Q")
+ord <- orderInds(pop = pop, q = q)
+plotAdmix(q, pop = pop, ord = ord, rotatelab = 15, padj = 0.15, cex.lab = 1.4, col = 2:8)
+r <- as.matrix(read.table("blue_wildebeest_noLD_admixerMult.7.corres.txt"))
+plotCorRes(r, pop = pop, ord = ord, max_z = 0.25, rotatelabpop = 20, adjlab = 0.05, title = "")
+```
+
 ## Differences from ADMIXTURE
 
 * Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random P,
