@@ -118,6 +118,81 @@ evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.cor
 Log written to blue_wildebeest_noLD_admixer.7.log
 ```
 
+<details>
+<summary>Full screen output of the run (click to expand)</summary>
+
+```
+admixer 0.1.0
+Command: admixer --seed 1 -j10 -o blue_wildebeest_noLD_admixer blue_wildebeest_noLD.bed 7
+Random seed: 1
+Point estimation method: Block relaxation algorithm (Newton/QP steps, BLAS kernels)
+Convergence acceleration algorithm: QuasiNewton, 3 secant conditions
+Point estimation will terminate when objective function delta < 0.0001
+Size of G: 73x37567
+Threads: 10
+Performing five EM steps to prime main algorithm
+1 (EM) 	Elapsed: 0.027	Loglikelihood: -3905731.572719	(delta): inf
+2 (EM) 	Elapsed: 0.038	Loglikelihood: -3589909.043398	(delta): 315823
+3 (EM) 	Elapsed: 0.046	Loglikelihood: -3575200.604387	(delta): 14708.4
+4 (EM) 	Elapsed: 0.054	Loglikelihood: -3574247.667174	(delta): 952.937
+5 (EM) 	Elapsed: 0.063	Loglikelihood: -3574138.765123	(delta): 108.902
+Initial loglikelihood: -3574096.334450
+1 (mini-batch, 32 batches) 	Elapsed: 0.186	Loglikelihood: -3305128.521989	(delta): 268968
+2 (mini-batch, 32 batches) 	Elapsed: 0.277	Loglikelihood: -3093758.676473	(delta): 211370
+3 (mini-batch, 32 batches) 	Elapsed: 0.360	Loglikelihood: -3020493.145204	(delta): 73265.5
+4 (mini-batch, 32 batches) 	Elapsed: 0.445	Loglikelihood: -3005025.468841	(delta): 15467.7
+5 (mini-batch, 32 batches) 	Elapsed: 0.529	Loglikelihood: -2983492.604508	(delta): 21532.9
+6 (mini-batch, 32 batches) 	Elapsed: 0.611	Loglikelihood: -2970637.518139	(delta): 12855.1
+7 (mini-batch, 32 batches) 	Elapsed: 0.699	Loglikelihood: -2963043.082644	(delta): 7594.44
+8 (mini-batch, 32 batches) 	Elapsed: 0.782	Loglikelihood: -2955627.401759	(delta): 7415.68
+9 (mini-batch, 32 batches) 	Elapsed: 0.862	Loglikelihood: -2949074.319889	(delta): 6553.08
+10 (mini-batch, 32 batches) 	Elapsed: 0.954	Loglikelihood: -2945153.291885	(delta): 3921.03
+11 (mini-batch, 32 batches) 	Elapsed: 1.033	Loglikelihood: -2941630.583178	(delta): 3522.71
+12 (mini-batch, 32 batches) 	Elapsed: 1.112	Loglikelihood: -2940097.110520	(delta): 1533.47
+13 (mini-batch, 32 batches) 	Elapsed: 1.189	Loglikelihood: -2937886.236841	(delta): 2210.87
+14 (mini-batch, 32 batches) 	Elapsed: 1.267	Loglikelihood: -2936857.473182	(delta): 1028.76
+15 (mini-batch, 32 batches) 	Elapsed: 1.345	Loglikelihood: -2936705.528626	(delta): 151.945
+16 (mini-batch, 32 batches) 	Elapsed: 1.424	Loglikelihood: -2936839.315748	(delta): -133.787
+17 (mini-batch, 16 batches) 	Elapsed: 1.492	Loglikelihood: -2934505.434622	(delta): 2333.88
+18 (mini-batch, 16 batches) 	Elapsed: 1.560	Loglikelihood: -2934593.456459	(delta): -88.0218
+19 (mini-batch, 8 batches) 	Elapsed: 1.622	Loglikelihood: -2933738.627439	(delta): 854.829
+20 (mini-batch, 8 batches) 	Elapsed: 1.691	Loglikelihood: -2933552.673173	(delta): 185.954
+21 (mini-batch, 8 batches) 	Elapsed: 1.754	Loglikelihood: -2933570.207691	(delta): -17.5345
+22 (mini-batch, 4 batches) 	Elapsed: 1.814	Loglikelihood: -2933229.690094	(delta): 340.518
+23 (mini-batch, 4 batches) 	Elapsed: 1.872	Loglikelihood: -2933135.647354	(delta): 94.0427
+24 (mini-batch, 4 batches) 	Elapsed: 1.932	Loglikelihood: -2933145.977744	(delta): -10.3304
+25 (mini-batch, 2 batches) 	Elapsed: 1.990	Loglikelihood: -2933015.506707	(delta): 130.471
+26 (mini-batch, 2 batches) 	Elapsed: 2.047	Loglikelihood: -2933009.051346	(delta): 6.45536
+27 (mini-batch, 2 batches) 	Elapsed: 2.105	Loglikelihood: -2933005.262884	(delta): 3.78846
+28 (mini-batch, 2 batches) 	Elapsed: 2.161	Loglikelihood: -2933001.307338	(delta): 3.95555
+29 (mini-batch, 2 batches) 	Elapsed: 2.218	Loglikelihood: -2933000.262047	(delta): 1.04529
+30 (mini-batch, 2 batches) 	Elapsed: 2.276	Loglikelihood: -2932999.566725	(delta): 0.695322
+31 (mini-batch, 2 batches) 	Elapsed: 2.334	Loglikelihood: -2932999.375594	(delta): 0.191131
+32 (mini-batch, 2 batches) 	Elapsed: 2.391	Loglikelihood: -2932998.737526	(delta): 0.638068
+33 (mini-batch, 2 batches) 	Elapsed: 2.449	Loglikelihood: -2932998.786367	(delta): -0.0488406
+Starting main algorithm
+1 (QN/Block) 	Elapsed: 2.571	Loglikelihood: -2932965.459753	(delta): inf
+2 (QN/Block) 	Elapsed: 2.685	Loglikelihood: -2932963.623793	(delta): 1.83596
+3 (QN/Block) 	Elapsed: 2.801	Loglikelihood: -2932963.275774	(delta): 0.348019
+4 (QN/Block) 	Elapsed: 2.915	Loglikelihood: -2932963.129045	(delta): 0.146729
+5 (QN/Block) 	Elapsed: 3.026	Loglikelihood: -2932963.106727	(delta): 0.0223178
+6 (QN/Block) 	Elapsed: 3.140	Loglikelihood: -2932963.079817	(delta): 0.0269099
+7 (QN/Block) 	Elapsed: 3.252	Loglikelihood: -2932963.073994	(delta): 0.005823
+8 (QN/Block) 	Elapsed: 3.364	Loglikelihood: -2932963.071934	(delta): 0.00205984
+9 (QN/Block) 	Elapsed: 3.476	Loglikelihood: -2932963.070470	(delta): 0.00146464
+10 (QN/Block) 	Elapsed: 3.590	Loglikelihood: -2932963.069341	(delta): 0.001129
+11 (QN/Block) 	Elapsed: 3.702	Loglikelihood: -2932963.069302	(delta): 3.84306e-05
+Summary: 
+Converged in 11 iterations (3.809 sec)
+Loglikelihood: -2932963.069302
+Optimality check (max KKT violation): P 7.78e-05 per individual, Q 2.34e-08 per SNP
+Writing output files.
+evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.11 sec)
+Log written to blue_wildebeest_noLD_admixer.7.log
+```
+
+</details>
+
 ![Admixture proportions, seed 1](docs/blue_wildebeest_noLD_admixer.admix.png)
 
 The fit looks wrong:
