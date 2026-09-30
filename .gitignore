@@ -7,3 +7,7 @@ admixer
 *.log
 admixer_new
 *.conv
+tests/work/
+tests/unit
+tests/qdist
+tools/simgl

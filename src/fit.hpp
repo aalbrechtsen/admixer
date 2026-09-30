@@ -1,6 +1,8 @@
-// admixer: fitting. Near-uniform random start -> 5 EM steps -> mini-batch block-relaxation warm-up ->
+// admixer: fitting. Near-uniform random start -> prime EM steps -> mini-batch block-relaxation warm-up ->
 // block relaxation with quasi-Newton acceleration (ADMIXTURE's algorithm) until the log-likelihood
-// improves by less than tol per iteration.
+// improves by less than tol per iteration. Defaults per data type are set in admixer.cpp (genotypes: 5 EM
+// steps and the warm-up; genotype likelihoods: neither, which was faster and found the best optimum more
+// often on the NGSadmix training data).
 #pragma once
 #include <omp.h>
 
@@ -32,9 +34,10 @@ struct FitResult {
   double seconds = 0;
 };
 
+template <class Model>
 class Fitter {
  public:
-  Fitter(Model& m, const FitSettings& s) : m_(m), s_(s) {}
+  Fitter(Model& m, const FitSettings& s) : m_(m), s_(s), off_(m.D.ll_offset()) {}
   bool verbose = true;  // print every iteration (false: silent; the caller prints a summary)
 
   // Random start: P uniform in [0.05, 0.95]; each row of Q near uniform, 1/K with 1% relative noise. A sparse
@@ -58,15 +61,15 @@ class Fitter {
   FitResult run(Vec& x) {
     const double t0 = omp_get_wtime();
     Vec y(x.size());
-    if (verbose) say("Performing five EM steps to prime main algorithm\n");
+    if (verbose && s_.prime > 0) say("Performing %d EM steps to prime main algorithm\n", s_.prime);
     double prev = -INFINITY;
     for (int it = 1; it <= s_.prime; it++) {
-      const double ll = m_.em(x.data(), y.data());
+      const double ll = m_.em(x.data(), y.data()) + off_;
       x.swap(y);
       log_line(it, "EM", ll, ll - prev, t0);
       prev = ll;
     }
-    double ll = m_.loglik(x.data());
+    double ll = m_.loglik(x.data()) + off_;
     if (verbose) say("Initial loglikelihood: %f\n", ll);
     if (s_.minibatch > 1 && !m_.pfix) warmup(x, t0);
     if (verbose) say("Starting main algorithm\n");
@@ -78,15 +81,24 @@ class Fitter {
  private:
   Model& m_;
   FitSettings s_;
+  double off_;  // the data type's constant part of the log-likelihood (0 for genotypes)
 
   void log_line(int it, const char* what, double ll, double delta, double t0) const {
     if (verbose) say("%d (%s) \tElapsed: %.3f\tLoglikelihood: %.6f\t(delta): %g\n", it, what, omp_get_wtime() - t0, ll,
                 delta);
   }
+  // dot product with a fixed summation order (blocks of 4096, added in order): reproducible for any schedule
   static double dot(const Vec& a, const Vec& b) {
+    const size_t n = a.size(), bs = 4096, nb = (n + bs - 1) / bs;
+    std::vector<double> part(nb, 0.0);
+#pragma omp parallel for schedule(static)
+    for (size_t c = 0; c < nb; c++) {
+      double s = 0;
+      for (size_t t = c * bs; t < std::min(n, (c + 1) * bs); t++) s += a[t] * b[t];
+      part[c] = s;
+    }
     double s = 0;
-#pragma omp parallel for reduction(+ : s) schedule(static)
-    for (size_t t = 0; t < a.size(); t++) s += a[t] * b[t];
+    for (double v : part) s += v;
     return s;
   }
 
@@ -102,7 +114,7 @@ class Fitter {
     Vec y(x.size());
     std::mt19937_64 rng(s_.seed);
     std::vector<int> order;
-    double prev = m_.loglik(x.data());
+    double prev = m_.loglik(x.data()) + off_;
     for (int epoch = 1; B > 1 && epoch <= s_.mb_max_epochs; epoch++) {
       order.resize(B);
       std::iota(order.begin(), order.end(), 0);
@@ -114,7 +126,7 @@ class Fitter {
         m_.sqp_Q(x.data(), x.data() + nP, y.data() + nP, ja, jb);
         std::copy(y.begin() + nP, y.begin() + nP + nQ, x.begin() + nP);
       }
-      const double ll = m_.loglik(x.data());
+      const double ll = m_.loglik(x.data()) + off_;
       char what[48];
       std::snprintf(what, sizeof what, "mini-batch, %d batches", B);
       log_line(epoch, what, ll, ll - prev, t0);
@@ -136,7 +148,7 @@ class Fitter {
     int it;
     for (it = 1; it <= s_.max_iter; it++) {
       m_.block_relax(x.data(), x1.data());
-      const double ll1 = m_.block_relax(x1.data(), x2.data());
+      const double ll1 = m_.block_relax(x1.data(), x2.data()) + off_;
       Vec u(n), v(n);
       for (size_t t = 0; t < n; t++) u[t] = x1[t] - x[t], v[t] = x2[t] - x1[t];
       if ((int)U.size() == q) U.erase(U.begin()), V.erase(V.begin());
@@ -157,7 +169,7 @@ class Fitter {
           for (int a = 0; a < h; a++) xq[t] += V[a][t] * c[a];
         m_.project(xq.data());
         m_.restore_fixed(xq.data(), x1.data());
-        llq = m_.loglik(xq.data());
+        llq = m_.loglik(xq.data()) + off_;
         accepted = llq > ll1;
       }
       if (accepted) {
@@ -165,7 +177,7 @@ class Fitter {
         ll = llq;
       } else {
         x.swap(x2);
-        ll = m_.loglik(x.data());
+        ll = m_.loglik(x.data()) + off_;
       }
       log_line(it, "QN/Block", ll, ll - prev, t0);
       if (std::fabs(ll - prev) < s_.tol) break;

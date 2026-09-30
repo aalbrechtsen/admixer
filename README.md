@@ -6,6 +6,10 @@ relaxation with Newton steps and quasi-Newton acceleration), evaluated with BLAS
 started with a mini-batch warm-up. It reaches the same likelihood as ADMIXTURE 1.3.0; in our benchmarks
 (20,000 SNPs, 2,000 individuals, K = 5–20, 8 threads) it was 40–90× faster.
 
+It also takes **genotype likelihoods** (beagle files, as for NGSadmix) and then fits NGSadmix's model with
+the same algorithm, using Newton steps with the exact curvature of the genotype-likelihood model (see
+[Genotype likelihoods](#genotype-likelihoods-beagle-input)).
+
 ## Install
 
 Requires a C++17 compiler with OpenMP (e.g. g++), OpenBLAS and zlib. On Ubuntu/Debian:
@@ -25,14 +29,16 @@ This builds the `admixer` binary in the current directory. `sudo make install` c
 
 ```
 admixer [options] data.bed K
+admixer [options] data.beagle.gz K
 ```
 
-The input is a PLINK binary file set (`data.bed`, `data.bim`, `data.fam`). The output is written to the
+The input is a PLINK binary file set (`data.bed`, `data.bim`, `data.fam`) or a beagle genotype
+likelihood file (any input not ending in `.bed`; gzipped or plain). The output is written to the
 working directory, in the same format as ADMIXTURE:
 
 * `data.K.Q`: admixture proportions, one row per individual;
 * `data.K.P.gz`: ancestral allele frequencies, one row per SNP (gzip-compressed; `--no-gzip` for `data.K.P`);
-* `data.K.corres.txt`: the evalAdmix correlation of residuals between individuals (corrected estimator),
+* `data.K.corres.txt` (PLINK input): the evalAdmix correlation of residuals between individuals (corrected estimator),
   for checking the model fit; plot it with evalAdmix's `visFuns.R`. It takes a few seconds for thousands of
   individuals but needs about 48 N² bytes of memory, so it is skipped above 20,000 individuals unless
   `--evaladmix` is given.
@@ -52,8 +58,66 @@ working directory, in the same format as ADMIXTURE:
 | `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
+| `--minMaf=X` | beagle input: keep sites with X < MAF < 1 − X (default 0.05, as NGSadmix; 0 keeps all) |
+| `--misTol=X` | beagle input: GLs with max − min < X count as missing (default 0.05, as NGSadmix) |
+| `--minInd=X` | beagle input: keep sites with more than X individuals with data (default 0 = off) |
+| `--keep-missing` | beagle input: use the missing GL entries as data (as NGSadmix's EM) instead of leaving them out |
+| `--bound=X` | P in [X, 1 − X], Q ≥ X (default 1e-5 for genotypes as ADMIXTURE, 1e-9 for GLs as NGSadmix) |
+| `--prime=X`, `--minibatch=X` | EM steps before the main algorithm and initial number of mini-batches (defaults 5 and 32 for genotypes, 0 and 0 for GLs) |
+| `--hess=exact\|em` | beagle input: curvature of the Newton steps (default exact; `em` = ADMIXTURE's EM-type weight) |
 
 Example: `admixer -j16 data.bed 5`
+
+## Genotype likelihoods (beagle input)
+
+```
+admixer -j8 input.beagle.gz 3
+```
+
+The beagle format is the one ANGSD writes (`-doGlf 2`) and NGSadmix reads: a header line, then one line per
+site with the marker name, two allele columns and three likelihoods per individual (0, 1 and 2 copies of
+the second allele). The model is NGSadmix's (Skotte, Korneliussen & Albrechtsen 2013): the genotype is
+summed out, L_ij = Σ_g GL_ijg · P(g | h_ij), with h_ij = Σ_k Q_ik P_jk. The output files are those of
+PLINK input, with P for the sites that pass the filters, in input order.
+
+* **Filters** as NGSadmix: sites with MAF ≤ 0.05 (estimated by EM from the GLs) are removed (`--minMaf`),
+  and so are sites with at most `--minInd` individuals with data.
+* **Missing data:** GLs with max − min < 0.05 (`--misTol`, NGSadmix's definition) are left out of the model.
+  Their nearly constant likelihood is added as a constant. The log also gives the exact log-likelihood
+  over all entries, which is NGSadmix's objective.
+* **Algorithm:** block relaxation with quasi-Newton acceleration from a random start, without the EM steps
+  and the mini-batch warm-up. The Newton steps use the exact second derivative of the GL likelihood.
+  ADMIXTURE's EM-type weight overstates the curvature when genotypes are uncertain, and it was 2–4×
+  slower. On the NGSadmix tutorial data (100 individuals, 49,475 sites, K = 3–6), this reached the best
+  optimum 8–84× faster than NGSadmix 32 (expected time over random starts), and from more starts
+  (100/100/64/64 % vs 100/48/16/12 %). The benchmark is in the separate `ngsadmix` development repository.
+* The evalAdmix correlation of residuals is not computed for genotype likelihoods yet; use evalAdmix
+  with `-beagle` on the output.
+
+## Testing
+
+```
+make test                                    # or: tests/run_tests.sh [--bin PATH] [-j N]
+```
+
+`tests/run_tests.sh` checks a build in about 10 seconds (well under 2 minutes). Its exit code is the number
+of failed checks. It uses the data in `tests/data`:
+* `sim.bed`: 200 individuals, 4,000 SNPs, K = 3, with the true Q;
+* two beagle files made from `sim.bed` with `tools/simgl`, at 3× depth and at mixed 0.5–6× depth per
+  individual.
+
+It checks:
+* the unit tests (`tests/unit.cpp`): derivatives against finite differences for both data types, EM
+  monotonicity, feasibility, certain GLs = genotypes, the parser and the Q matching;
+* the command line and error handling;
+* for both input types: the log-likelihood against the references in `tests/expected.tsv` (±0.01;
+  higher is reported as IMPROVED), KKT optimality, accuracy against the true Q, and the output formats;
+* that the same seed gives the same Q, and that 1 thread reaches the same optimum;
+* `--conv`, `--supervised`, `-P` (Q from a fixed P equals the joint fit), `--keep-missing` and `--hess=em`.
+
+Iterations and times are compared with the references, and large increases give a warning, not a
+failure. After an intended change of results, `tests/run_tests.sh --update` rewrites
+`tests/expected.tsv`.
 
 ### Convergence test with several starts
 
@@ -278,11 +342,13 @@ The median time per run is 3.2 s for admixer and 53 s for ADMIXTURE, 17× faster
 * Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random P,
   near-uniform Q, 5 EM steps, then a mini-batch warm-up.
 * Not implemented: cross-validation (`--cv`), bootstrap standard errors (`-B`), penalised estimation
-  (`-l`), haploid data, the EM method and the Fst printout. Only PLINK `.bed` input. Note that `-m` is
+  (`-l`), haploid data, the EM method and the Fst printout. Input is PLINK `.bed` (or beagle GLs). Note that `-m` is
   admixer's maximum number of runs, not ADMIXTURE's method option.
 * Default 8 threads instead of 1; the P matrix is gzip-compressed, the evalAdmix correlation of
   residuals is written by default, and the screen output is also saved to `data.K.log`.
-* The log ends with a first-order optimality (KKT) check of the solution.
+* The log ends with a first-order optimality (KKT) check of the solution: the largest step of the projected
+  gradient (P: gradient / N, Q: gradient / M), which is 0 at a KKT point. The example log above is from
+  version 0.1.0, which printed this check as "max KKT violation ... per individual/per SNP" (same values here).
 
 ## Citation
 
