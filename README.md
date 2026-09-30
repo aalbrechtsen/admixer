@@ -151,6 +151,31 @@ r <- as.matrix(read.table("blue_wildebeest_noLD_admixerMult.7.corres.txt"))
 plotCorRes(r, pop = pop, ord = ord, max_z = 0.25, rotatelabpop = 20, adjlab = 0.05, title = "")
 ```
 
+### Comparison with ADMIXTURE
+
+Ten runs of each program on the same data (seeds 1–10, K = 7, 8 threads, one run at a time):
+
+```
+admixture -j8 -s $seed blue_wildebeest_noLD.bed 7
+admixer -j8 -s $seed blue_wildebeest_noLD.bed 7
+```
+
+![Log-likelihood of 10 runs, ADMIXTURE vs admixer](docs/wildebeest_loglik_admixture_vs_admixer.png)
+
+Both programs reach the best likelihood in 5 of the 10 runs. The other runs end in local optima 10,000–27,000
+units lower. Over 30 seeds the counts were 18/30 for admixer and 13/30 for ADMIXTURE.
+
+The best runs agree:
+- admixer: −2906767.4958 to −2906767.4958;
+- ADMIXTURE: −2906767.503 to −2906767.656.
+
+ADMIXTURE's runs are a little lower because its stopping rule ends them slightly before the optimum.
+
+![Time per run, ADMIXTURE vs admixer](docs/wildebeest_time_admixture_vs_admixer.png)
+
+The median time per run is 3.2 s for admixer and 53 s for ADMIXTURE, 17× faster. So `--conv 3` with admixer
+(33 s above) takes less time than a single ADMIXTURE run.
+
 ## Differences from ADMIXTURE
 
 * Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random P,
