@@ -1,14 +1,19 @@
 # admixer
 
-Fast maximum-likelihood estimation of ancestry proportions under the ADMIXTURE model, with
-ADMIXTURE's command line, input and output. It uses ADMIXTURE's own optimisation algorithm (block
-relaxation with Newton steps and quasi-Newton acceleration), evaluated with BLAS matrix products and
-started with a mini-batch warm-up. It reaches the same likelihood as ADMIXTURE 1.3.0; in our benchmarks
-(20,000 SNPs, 2,000 individuals, K = 5–20, 8 threads) it was 40–90× faster.
+Fast maximum-likelihood estimation of ancestry proportions (Q) and ancestral allele frequencies (P) from
 
-It also takes **genotype likelihoods** (beagle files, as for NGSadmix) and then fits NGSadmix's model with
-the same algorithm, using Newton steps with the exact curvature of the genotype-likelihood model (see
-[Genotype likelihoods](#genotype-likelihoods-beagle-input)).
+* **called genotypes** (PLINK `.bed`), under the ADMIXTURE model, with ADMIXTURE's command line, input and
+  output; or
+* **genotype likelihoods** (beagle files, as written by ANGSD), under the NGSadmix model, for
+  low-depth sequencing data.
+
+Both use ADMIXTURE's optimisation algorithm: block relaxation with Newton steps and quasi-Newton
+acceleration, evaluated with BLAS matrix products. For genotype likelihoods, the Newton steps use the exact
+curvature of the likelihood.
+* **Genotypes:** it reaches the same likelihood as ADMIXTURE 1.3.0 and was 40–90× faster in our benchmarks
+  (20,000 SNPs, 2,000 individuals, K = 5–20, 8 threads).
+* **Genotype likelihoods:** on the NGSadmix tutorial data, it reached the best solution 8–84× faster than
+  NGSadmix 32 (K = 3–6), and from more random starts.
 
 ## Install
 
@@ -19,6 +24,7 @@ sudo apt-get install build-essential libopenblas-dev zlib1g-dev
 git clone git@github.com:aalbrechtsen/admixer.git
 cd admixer
 make
+make test        # optional: the test suite, about 10 seconds
 ```
 
 This builds the `admixer` binary in the current directory. `sudo make install` copies it to
@@ -28,21 +34,21 @@ This builds the `admixer` binary in the current directory. `sudo make install` c
 ## Usage
 
 ```
-admixer [options] data.bed K
-admixer [options] data.beagle.gz K
+admixer [options] data.bed K            # called genotypes: data.bed, data.bim, data.fam
+admixer [options] data.beagle.gz K      # genotype likelihoods (any input not ending in .bed)
 ```
 
-The input is a PLINK binary file set (`data.bed`, `data.bim`, `data.fam`) or a beagle genotype
-likelihood file (any input not ending in `.bed`; gzipped or plain). The output is written to the
-working directory, in the same format as ADMIXTURE:
+The output is written to the working directory, in ADMIXTURE's format, with the input name without its
+extension (`data`) as prefix:
 
 * `data.K.Q`: admixture proportions, one row per individual;
-* `data.K.P.gz`: ancestral allele frequencies, one row per SNP (gzip-compressed; `--no-gzip` for `data.K.P`);
-* `data.K.corres.txt` (PLINK input): the evalAdmix correlation of residuals between individuals (corrected estimator),
-  for checking the model fit; plot it with evalAdmix's `visFuns.R`. It takes a few seconds for thousands of
-  individuals but needs about 48 N² bytes of memory, so it is skipped above 20,000 individuals unless
-  `--evaladmix` is given.
-* `data.K.log`: the log printed to the screen (command line, progress, final log-likelihood).
+* `data.K.P.gz`: ancestral allele frequencies, one row per SNP (gzip-compressed; `--no-gzip` for `data.K.P`).
+  For beagle input, the rows are the sites that pass the filters, in input order;
+* `data.K.corres.txt` (PLINK input): the evalAdmix correlation of residuals between individuals (corrected
+  estimator), for checking the model fit; plot it with evalAdmix's `visFuns.R`. It takes a few seconds for
+  thousands of individuals but needs about 48 N² bytes of memory, so it is skipped above 20,000 individuals
+  unless `--evaladmix` is given;
+* `data.K.log`: the log printed to the screen (command line, progress, final log-likelihood, optimality check).
 
 | option | meaning |
 |---|---|
@@ -53,71 +59,22 @@ working directory, in the same format as ADMIXTURE:
 | `--no-gzip` | write the P matrix uncompressed (`NAME.K.P`) |
 | `--supervised` | supervised analysis; reads `data.pop` (one line per individual: a population name, or `-` if unknown). Labelled individuals are held at their population; K must equal the number of population names, and columns follow the order of first appearance in `data.pop` |
 | `-P` | projection; reads `data.K.P.in` (or `data.K.P.in.gz`) and estimates Q with P held fixed |
-| `--no-evaladmix` | do not compute the evalAdmix correlation of residuals |
-| `--evaladmix` | compute it even for more than 20,000 individuals |
 | `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
+| `--no-evaladmix` | PLINK input: do not compute the evalAdmix correlation of residuals |
+| `--evaladmix` | PLINK input: compute it even for more than 20,000 individuals |
 | `--minMaf=X` | beagle input: keep sites with X < MAF < 1 − X (default 0.05, as NGSadmix; 0 keeps all) |
 | `--misTol=X` | beagle input: GLs with max − min < X count as missing (default 0.05, as NGSadmix) |
 | `--minInd=X` | beagle input: keep sites with more than X individuals with data (default 0 = off) |
 | `--keep-missing` | beagle input: use the missing GL entries as data (as NGSadmix's EM) instead of leaving them out |
-| `--bound=X` | P in [X, 1 − X], Q ≥ X (default 1e-5 for genotypes as ADMIXTURE, 1e-9 for GLs as NGSadmix) |
-| `--prime=X`, `--minibatch=X` | EM steps before the main algorithm and initial number of mini-batches (defaults 5 and 32 for genotypes, 0 and 0 for GLs) |
-| `--hess=exact\|em` | beagle input: curvature of the Newton steps (default exact; `em` = ADMIXTURE's EM-type weight) |
 
-Example: `admixer -j16 data.bed 5`
+Advanced options, mainly for benchmarking: `--bound=X` (P in [X, 1 − X] and Q ≥ X; default 1e-5 for
+genotypes as ADMIXTURE, 1e-9 for GLs as NGSadmix), `--prime=X` (EM steps before the main algorithm),
+`--minibatch=X` (initial number of mini-batches of the warm-up), `--hess=exact|em` (curvature of the Newton
+steps for GLs) and `--max-iter=X`.
 
-## Genotype likelihoods (beagle input)
-
-```
-admixer -j8 input.beagle.gz 3
-```
-
-The beagle format is the one ANGSD writes (`-doGlf 2`) and NGSadmix reads: a header line, then one line per
-site with the marker name, two allele columns and three likelihoods per individual (0, 1 and 2 copies of
-the second allele). The model is NGSadmix's (Skotte, Korneliussen & Albrechtsen 2013): the genotype is
-summed out, L_ij = Σ_g GL_ijg · P(g | h_ij), with h_ij = Σ_k Q_ik P_jk. The output files are those of
-PLINK input, with P for the sites that pass the filters, in input order.
-
-* **Filters** as NGSadmix: sites with MAF ≤ 0.05 (estimated by EM from the GLs) are removed (`--minMaf`),
-  and so are sites with at most `--minInd` individuals with data.
-* **Missing data:** GLs with max − min < 0.05 (`--misTol`, NGSadmix's definition) are left out of the model.
-  Their nearly constant likelihood is added as a constant. The log also gives the exact log-likelihood
-  over all entries, which is NGSadmix's objective.
-* **Algorithm:** block relaxation with quasi-Newton acceleration from a random start, without the EM steps
-  and the mini-batch warm-up. The Newton steps use the exact second derivative of the GL likelihood.
-  ADMIXTURE's EM-type weight overstates the curvature when genotypes are uncertain, and it was 2–4×
-  slower. On the NGSadmix tutorial data (100 individuals, 49,475 sites, K = 3–6), this reached the best
-  optimum 8–84× faster than NGSadmix 32 (expected time over random starts), and from more starts
-  (100/100/64/64 % vs 100/48/16/12 %). The benchmark is in the separate `ngsadmix` development repository.
-* The evalAdmix correlation of residuals is not computed for genotype likelihoods yet; use evalAdmix
-  with `-beagle` on the output.
-
-## Testing
-
-```
-make test                                    # or: tests/run_tests.sh [--bin PATH] [-j N]
-```
-
-`tests/run_tests.sh` checks a build in about 10 seconds (well under 2 minutes). Its exit code is the number
-of failed checks. It uses the data in `tests/data`:
-* `sim.bed`: 200 individuals, 4,000 SNPs, K = 3, with the true Q;
-* two beagle files made from `sim.bed` with `tools/simgl`, at 3× depth and at mixed 0.5–6× depth per
-  individual.
-
-It checks:
-* the unit tests (`tests/unit.cpp`): derivatives against finite differences for both data types, EM
-  monotonicity, feasibility, certain GLs = genotypes, the parser and the Q matching;
-* the command line and error handling;
-* for both input types: the log-likelihood against the references in `tests/expected.tsv` (±0.01;
-  higher is reported as IMPROVED), KKT optimality, accuracy against the true Q, and the output formats;
-* that the same seed gives the same Q, and that 1 thread reaches the same optimum;
-* `--conv`, `--supervised`, `-P` (Q from a fixed P equals the joint fit), `--keep-missing` and `--hess=em`.
-
-Iterations and times are compared with the references, and large increases give a warning, not a
-failure. After an intended change of results, `tests/run_tests.sh --update` rewrites
-`tests/expected.tsv`.
+Examples: `admixer -j16 data.bed 5`, `admixer -j16 input.beagle.gz 3`
 
 ### Convergence test with several starts
 
@@ -128,15 +85,57 @@ log-likelihood), and a run agrees with the best run if the largest difference in
 `--conv_thres`. It stops when X runs (including the best) agree, or after `--max_runs` runs. This is the
 Q-matrix criterion of popgenDK's `testQconv.R`, with an exact optimal matching of the ancestries.
 
-The output files are those of the best run. `data.K.conv` lists every run, sorted by log-likelihood (best run first): seed, log-likelihood and its
-difference to the best run, the distances to the best run's Q (largest absolute difference, mean
-per-individual sum of absolute differences, RMSE), iterations, seconds and whether it agrees.
+The output files are those of the best run. `data.K.conv` lists every run, sorted by log-likelihood (best
+run first), with these columns:
+* seed;
+* the log-likelihood and its difference to the best run;
+* the distances to the best run's Q: the largest absolute difference, the mean per-individual sum of
+  absolute differences, and the RMSE;
+* iterations and seconds;
+* whether the run agrees.
+
 The log says whether the runs converged.
 
 Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... until 3 runs agree
 (at most 10 runs).
 
-## Example: blue wildebeest, K = 7
+## Algorithms
+
+**Called genotypes (ADMIXTURE model).** g_ij ~ Binomial(2, h_ij) with h_ij = Σ_k Q_ik P_jk.
+1. The fit starts from a random P and a near-uniform Q.
+2. It takes 5 EM steps.
+3. A mini-batch warm-up follows: block-relaxation steps on SNP batches. The number of batches is halved
+   whenever an epoch does not improve the likelihood.
+4. Then it runs ADMIXTURE's block relaxation until the log-likelihood improves by less than `-C`. Each
+   iteration takes one Newton/QP step for every row of P and then for every row of Q, accelerated by
+   quasi-Newton extrapolation with 3 secant pairs.
+
+The parameter bounds and the stopping rule are those of ADMIXTURE.
+
+**Genotype likelihoods (NGSadmix model).** The genotype is summed out:
+L_ij = GL0 (1 − h)² + GL1 · 2h(1 − h) + GL2 · h² (Skotte, Korneliussen & Albrechtsen 2013).
+* **Algorithm:** the same block relaxation with quasi-Newton acceleration, from a random start. It uses no
+  EM steps and no warm-up, because neither helped on the NGSadmix tutorial data, and the warm-up made the
+  best solution rarer.
+* **Curvature:** the Newton steps use the exact second derivative of log L_ij in h, clamped at 0. For GLs,
+  ADMIXTURE's EM-type weight overstates the curvature by the missing information Var[g | GL] / (h(1 − h))²,
+  so its steps are too short. It was 2–4× slower.
+* **Filters and bounds:** as NGSadmix. Sites with an estimated MAF ≤ 0.05 are removed, and the bounds are 1e-9.
+* **Missing data:** GLs with max − min < 0.05 (`--misTol`, NGSadmix's definition of missing) are left out of
+  the model, and their nearly constant likelihood is added as a constant. The log also gives the exact
+  log-likelihood over all entries, which is NGSadmix's objective.
+* **Not yet available:** the evalAdmix correlation of residuals is not computed for genotype likelihoods;
+  use evalAdmix with `-beagle` on the output.
+
+**Common to both.**
+* Every pass over the data works on tiles of SNPs × individuals: a matrix product gives the tile of
+  H = P Qᵀ, an element-wise step computes the likelihood terms, and further matrix products give the EM
+  statistics, the gradients and the Newton Hessians. The tiles run in parallel on OpenMP threads.
+* The same seed and number of threads give identical results.
+* The log ends with a first-order optimality check: the largest step of the projected gradient
+  (gradient / N for P, gradient / M for Q), which is 0 at a local optimum.
+
+## Example: blue wildebeest (PLINK), K = 7
 
 This example follows the popgenDK exercise
 [Admixture proportions from called genotypes: blue wildebeest](https://github.com/popgenDK/courses/blob/main/current_exercises/admixture/admixture_called_genotypes_animal.ipynb).
@@ -165,7 +164,7 @@ admixer --seed 1 -j10 -o blue_wildebeest_noLD_admixer blue_wildebeest_noLD.bed 7
 <summary>Full screen output = log file <code>blue_wildebeest_noLD_admixer.7.log</code> (click to expand)</summary>
 
 ```
-admixer 0.1.0
+admixer 0.2.0
 Command: admixer --seed 1 -j10 -o blue_wildebeest_noLD_admixer blue_wildebeest_noLD.bed 7
 Random seed: 1
 Point estimation method: Block relaxation algorithm (Newton/QP steps, BLAS kernels)
@@ -173,70 +172,70 @@ Convergence acceleration algorithm: QuasiNewton, 3 secant conditions
 Point estimation will terminate when objective function delta < 0.0001
 Size of G: 73x37567
 Threads: 10
-Performing five EM steps to prime main algorithm
-1 (EM) 	Elapsed: 0.027	Loglikelihood: -3905731.572719	(delta): inf
-2 (EM) 	Elapsed: 0.038	Loglikelihood: -3589909.043398	(delta): 315823
+Performing 5 EM steps to prime main algorithm
+1 (EM) 	Elapsed: 0.020	Loglikelihood: -3905731.572719	(delta): inf
+2 (EM) 	Elapsed: 0.033	Loglikelihood: -3589909.043398	(delta): 315823
 3 (EM) 	Elapsed: 0.046	Loglikelihood: -3575200.604387	(delta): 14708.4
-4 (EM) 	Elapsed: 0.054	Loglikelihood: -3574247.667174	(delta): 952.937
-5 (EM) 	Elapsed: 0.063	Loglikelihood: -3574138.765123	(delta): 108.902
+4 (EM) 	Elapsed: 0.059	Loglikelihood: -3574247.667174	(delta): 952.937
+5 (EM) 	Elapsed: 0.066	Loglikelihood: -3574138.765123	(delta): 108.902
 Initial loglikelihood: -3574096.334450
-1 (mini-batch, 32 batches) 	Elapsed: 0.186	Loglikelihood: -3305128.521989	(delta): 268968
-2 (mini-batch, 32 batches) 	Elapsed: 0.277	Loglikelihood: -3093758.676473	(delta): 211370
-3 (mini-batch, 32 batches) 	Elapsed: 0.360	Loglikelihood: -3020493.145204	(delta): 73265.5
-4 (mini-batch, 32 batches) 	Elapsed: 0.445	Loglikelihood: -3005025.468841	(delta): 15467.7
-5 (mini-batch, 32 batches) 	Elapsed: 0.529	Loglikelihood: -2983492.604508	(delta): 21532.9
-6 (mini-batch, 32 batches) 	Elapsed: 0.611	Loglikelihood: -2970637.518139	(delta): 12855.1
-7 (mini-batch, 32 batches) 	Elapsed: 0.699	Loglikelihood: -2963043.082644	(delta): 7594.44
-8 (mini-batch, 32 batches) 	Elapsed: 0.782	Loglikelihood: -2955627.401759	(delta): 7415.68
-9 (mini-batch, 32 batches) 	Elapsed: 0.862	Loglikelihood: -2949074.319889	(delta): 6553.08
-10 (mini-batch, 32 batches) 	Elapsed: 0.954	Loglikelihood: -2945153.291885	(delta): 3921.03
-11 (mini-batch, 32 batches) 	Elapsed: 1.033	Loglikelihood: -2941630.583178	(delta): 3522.71
-12 (mini-batch, 32 batches) 	Elapsed: 1.112	Loglikelihood: -2940097.110520	(delta): 1533.47
-13 (mini-batch, 32 batches) 	Elapsed: 1.189	Loglikelihood: -2937886.236841	(delta): 2210.87
-14 (mini-batch, 32 batches) 	Elapsed: 1.267	Loglikelihood: -2936857.473182	(delta): 1028.76
-15 (mini-batch, 32 batches) 	Elapsed: 1.345	Loglikelihood: -2936705.528626	(delta): 151.945
-16 (mini-batch, 32 batches) 	Elapsed: 1.424	Loglikelihood: -2936839.315748	(delta): -133.787
-17 (mini-batch, 16 batches) 	Elapsed: 1.492	Loglikelihood: -2934505.434622	(delta): 2333.88
-18 (mini-batch, 16 batches) 	Elapsed: 1.560	Loglikelihood: -2934593.456459	(delta): -88.0218
-19 (mini-batch, 8 batches) 	Elapsed: 1.622	Loglikelihood: -2933738.627439	(delta): 854.829
-20 (mini-batch, 8 batches) 	Elapsed: 1.691	Loglikelihood: -2933552.673173	(delta): 185.954
-21 (mini-batch, 8 batches) 	Elapsed: 1.754	Loglikelihood: -2933570.207691	(delta): -17.5345
-22 (mini-batch, 4 batches) 	Elapsed: 1.814	Loglikelihood: -2933229.690094	(delta): 340.518
-23 (mini-batch, 4 batches) 	Elapsed: 1.872	Loglikelihood: -2933135.647354	(delta): 94.0427
-24 (mini-batch, 4 batches) 	Elapsed: 1.932	Loglikelihood: -2933145.977744	(delta): -10.3304
-25 (mini-batch, 2 batches) 	Elapsed: 1.990	Loglikelihood: -2933015.506707	(delta): 130.471
-26 (mini-batch, 2 batches) 	Elapsed: 2.047	Loglikelihood: -2933009.051346	(delta): 6.45536
-27 (mini-batch, 2 batches) 	Elapsed: 2.105	Loglikelihood: -2933005.262884	(delta): 3.78846
-28 (mini-batch, 2 batches) 	Elapsed: 2.161	Loglikelihood: -2933001.307338	(delta): 3.95555
-29 (mini-batch, 2 batches) 	Elapsed: 2.218	Loglikelihood: -2933000.262047	(delta): 1.04529
-30 (mini-batch, 2 batches) 	Elapsed: 2.276	Loglikelihood: -2932999.566725	(delta): 0.695322
-31 (mini-batch, 2 batches) 	Elapsed: 2.334	Loglikelihood: -2932999.375594	(delta): 0.191131
-32 (mini-batch, 2 batches) 	Elapsed: 2.391	Loglikelihood: -2932998.737526	(delta): 0.638068
-33 (mini-batch, 2 batches) 	Elapsed: 2.449	Loglikelihood: -2932998.786367	(delta): -0.0488406
+1 (mini-batch, 32 batches) 	Elapsed: 0.106	Loglikelihood: -3305128.521990	(delta): 268968
+2 (mini-batch, 32 batches) 	Elapsed: 0.140	Loglikelihood: -3093758.676583	(delta): 211370
+3 (mini-batch, 32 batches) 	Elapsed: 0.172	Loglikelihood: -3020493.145233	(delta): 73265.5
+4 (mini-batch, 32 batches) 	Elapsed: 0.204	Loglikelihood: -3005025.468846	(delta): 15467.7
+5 (mini-batch, 32 batches) 	Elapsed: 0.235	Loglikelihood: -2983492.604547	(delta): 21532.9
+6 (mini-batch, 32 batches) 	Elapsed: 0.266	Loglikelihood: -2970637.518189	(delta): 12855.1
+7 (mini-batch, 32 batches) 	Elapsed: 0.297	Loglikelihood: -2963043.082693	(delta): 7594.44
+8 (mini-batch, 32 batches) 	Elapsed: 0.328	Loglikelihood: -2955627.401733	(delta): 7415.68
+9 (mini-batch, 32 batches) 	Elapsed: 0.358	Loglikelihood: -2949074.319921	(delta): 6553.08
+10 (mini-batch, 32 batches) 	Elapsed: 0.389	Loglikelihood: -2945153.291887	(delta): 3921.03
+11 (mini-batch, 32 batches) 	Elapsed: 0.420	Loglikelihood: -2941630.583157	(delta): 3522.71
+12 (mini-batch, 32 batches) 	Elapsed: 0.450	Loglikelihood: -2940097.110490	(delta): 1533.47
+13 (mini-batch, 32 batches) 	Elapsed: 0.481	Loglikelihood: -2937886.236820	(delta): 2210.87
+14 (mini-batch, 32 batches) 	Elapsed: 0.511	Loglikelihood: -2936857.473163	(delta): 1028.76
+15 (mini-batch, 32 batches) 	Elapsed: 0.542	Loglikelihood: -2936705.528617	(delta): 151.945
+16 (mini-batch, 32 batches) 	Elapsed: 0.573	Loglikelihood: -2936839.315741	(delta): -133.787
+17 (mini-batch, 16 batches) 	Elapsed: 0.595	Loglikelihood: -2934505.434620	(delta): 2333.88
+18 (mini-batch, 16 batches) 	Elapsed: 0.617	Loglikelihood: -2934593.456450	(delta): -88.0218
+19 (mini-batch, 8 batches) 	Elapsed: 0.637	Loglikelihood: -2933738.627437	(delta): 854.829
+20 (mini-batch, 8 batches) 	Elapsed: 0.658	Loglikelihood: -2933552.673171	(delta): 185.954
+21 (mini-batch, 8 batches) 	Elapsed: 0.679	Loglikelihood: -2933570.207690	(delta): -17.5345
+22 (mini-batch, 4 batches) 	Elapsed: 0.698	Loglikelihood: -2933229.690093	(delta): 340.518
+23 (mini-batch, 4 batches) 	Elapsed: 0.717	Loglikelihood: -2933135.647354	(delta): 94.0427
+24 (mini-batch, 4 batches) 	Elapsed: 0.736	Loglikelihood: -2933145.977744	(delta): -10.3304
+25 (mini-batch, 2 batches) 	Elapsed: 0.755	Loglikelihood: -2933015.506707	(delta): 130.471
+26 (mini-batch, 2 batches) 	Elapsed: 0.773	Loglikelihood: -2933009.051346	(delta): 6.45536
+27 (mini-batch, 2 batches) 	Elapsed: 0.791	Loglikelihood: -2933005.262884	(delta): 3.78846
+28 (mini-batch, 2 batches) 	Elapsed: 0.809	Loglikelihood: -2933001.307338	(delta): 3.95555
+29 (mini-batch, 2 batches) 	Elapsed: 0.827	Loglikelihood: -2933000.262047	(delta): 1.04529
+30 (mini-batch, 2 batches) 	Elapsed: 0.845	Loglikelihood: -2932999.566725	(delta): 0.695322
+31 (mini-batch, 2 batches) 	Elapsed: 0.863	Loglikelihood: -2932999.375594	(delta): 0.191131
+32 (mini-batch, 2 batches) 	Elapsed: 0.882	Loglikelihood: -2932998.737526	(delta): 0.638068
+33 (mini-batch, 2 batches) 	Elapsed: 0.900	Loglikelihood: -2932998.786367	(delta): -0.0488406
 Starting main algorithm
-1 (QN/Block) 	Elapsed: 2.571	Loglikelihood: -2932965.459753	(delta): inf
-2 (QN/Block) 	Elapsed: 2.685	Loglikelihood: -2932963.623793	(delta): 1.83596
-3 (QN/Block) 	Elapsed: 2.801	Loglikelihood: -2932963.275774	(delta): 0.348019
-4 (QN/Block) 	Elapsed: 2.915	Loglikelihood: -2932963.129045	(delta): 0.146729
-5 (QN/Block) 	Elapsed: 3.026	Loglikelihood: -2932963.106727	(delta): 0.0223178
-6 (QN/Block) 	Elapsed: 3.140	Loglikelihood: -2932963.079817	(delta): 0.0269099
-7 (QN/Block) 	Elapsed: 3.252	Loglikelihood: -2932963.073994	(delta): 0.005823
-8 (QN/Block) 	Elapsed: 3.364	Loglikelihood: -2932963.071934	(delta): 0.00205984
-9 (QN/Block) 	Elapsed: 3.476	Loglikelihood: -2932963.070470	(delta): 0.00146464
-10 (QN/Block) 	Elapsed: 3.590	Loglikelihood: -2932963.069341	(delta): 0.001129
-11 (QN/Block) 	Elapsed: 3.702	Loglikelihood: -2932963.069302	(delta): 3.84306e-05
+1 (QN/Block) 	Elapsed: 0.940	Loglikelihood: -2932965.459753	(delta): inf
+2 (QN/Block) 	Elapsed: 0.977	Loglikelihood: -2932963.623793	(delta): 1.83596
+3 (QN/Block) 	Elapsed: 1.022	Loglikelihood: -2932963.275774	(delta): 0.348019
+4 (QN/Block) 	Elapsed: 1.062	Loglikelihood: -2932963.129045	(delta): 0.146729
+5 (QN/Block) 	Elapsed: 1.098	Loglikelihood: -2932963.106727	(delta): 0.0223178
+6 (QN/Block) 	Elapsed: 1.134	Loglikelihood: -2932963.079817	(delta): 0.0269099
+7 (QN/Block) 	Elapsed: 1.171	Loglikelihood: -2932963.073994	(delta): 0.005823
+8 (QN/Block) 	Elapsed: 1.207	Loglikelihood: -2932963.071934	(delta): 0.00205984
+9 (QN/Block) 	Elapsed: 1.243	Loglikelihood: -2932963.070470	(delta): 0.00146464
+10 (QN/Block) 	Elapsed: 1.279	Loglikelihood: -2932963.069341	(delta): 0.00112899
+11 (QN/Block) 	Elapsed: 1.315	Loglikelihood: -2932963.069302	(delta): 3.84306e-05
 Summary: 
-Converged in 11 iterations (3.809 sec)
+Converged in 11 iterations (1.381 sec)
 Loglikelihood: -2932963.069302
-Optimality check (max KKT violation): P 7.78e-05 per individual, Q 2.34e-08 per SNP
+Optimality check (max projected gradient): P 7.78e-05, Q 2.34e-08
 Writing output files.
-evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.11 sec)
+evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.08 sec)
 Log written to blue_wildebeest_noLD_admixer.7.log
 ```
 
 </details>
 
-This run takes 4 seconds and ends at log-likelihood −2932963.07. It writes these files:
+This run takes 1.4 seconds and ends at log-likelihood −2932963.07. It writes these files:
 
 | file | size | content |
 |---|---|---|
@@ -246,16 +245,7 @@ This run takes 4 seconds and ends at log-likelihood −2932963.07. It writes the
 | `blue_wildebeest_noLD_admixer.7.log` | 5 kB | the screen output: command, settings, every iteration, final log-likelihood, optimality check |
 
 The evalAdmix correlations are computed by default, in 0.1 s here. You do not need to run evalAdmix
-separately; the file is read directly by evalAdmix's `plotCorRes` (see below). The end of the log:
-
-```
-Converged in 11 iterations (3.809 sec)
-Loglikelihood: -2932963.069302
-Optimality check (max KKT violation): P 7.78e-05 per individual, Q 2.34e-08 per SNP
-Writing output files.
-evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.11 sec)
-Log written to blue_wildebeest_noLD_admixer.7.log
-```
+separately; the file is read directly by evalAdmix's `plotCorRes` (see below).
 
 ![Admixture proportions, seed 1](docs/blue_wildebeest_noLD_admixer.admix.png)
 
@@ -275,7 +265,7 @@ between them and B-Ethosha.
 admixer --seed 0 -j10 -o blue_wildebeest_noLD_admixerMult blue_wildebeest_noLD.bed 7 --conv 3
 ```
 
-This tries seeds 0, 1, 2, ... until three runs agree with the best run, in 33 seconds.
+This tries seeds 0, 1, 2, ... until three runs agree with the best run, in 11 seconds.
 `blue_wildebeest_noLD_admixerMult.7.conv` lists the runs, best first:
 
 ```
@@ -314,7 +304,8 @@ plotCorRes(r, pop = pop, ord = ord, max_z = 0.25, rotatelabpop = 20, adjlab = 0.
 
 ### Comparison with ADMIXTURE
 
-Ten runs of each program on the same data (seeds 1–10, K = 7, 8 threads, one run at a time):
+Ten runs of each program on the same data (seeds 1–10, K = 7, 8 threads, one run at a time; admixer 0.1.0,
+which gives the same results as 0.2.0):
 
 ```
 admixture -j8 -s $seed blue_wildebeest_noLD.bed 7
@@ -334,24 +325,96 @@ ADMIXTURE's runs are a little lower because its stopping rule ends them slightly
 
 ![Time per run, ADMIXTURE vs admixer](docs/wildebeest_time_admixture_vs_admixer.png)
 
-The median time per run is 3.2 s for admixer and 53 s for ADMIXTURE, 17× faster. So `--conv 3` with admixer
-(33 s above) takes less time than a single ADMIXTURE run.
+The median time per run was 3.2 s for admixer 0.1.0 and 53 s for ADMIXTURE, 17× faster (admixer 0.2.0 is
+another ~30% faster on these data). So `--conv 3` with admixer (11 s above) takes much less time than a single
+ADMIXTURE run.
 
-## Differences from ADMIXTURE
+## Example: genotype likelihoods, NGSadmix tutorial data, K = 3
 
+The NGSadmix tutorial file `input.gz` holds beagle GLs for 100 HapMap individuals (ASW, CEU, CHB, MXL, YRI)
+at 50,000 sites.
+
+```
+admixer --seed 1 -j10 input.gz 3
+```
+
+The MAF filter keeps 49,475 sites, and 3.3 % of the GL entries are missing. The end of the log:
+
+```
+26 (QN/Block) 	Elapsed: 1.220	Loglikelihood: -3865964.313412	(delta): 1.29216e-05
+Summary: 
+Converged in 26 iterations (2.112 sec)
+Loglikelihood: -3865964.313412
+Loglikelihood over all GL entries, missing ones included (as NGSadmix): -3865964.313411
+Optimality check (max projected gradient): P 2.93e-05, Q 3.12e-11
+Writing output files.
+Log written to input.3.log
+```
+
+With 8 threads, NGSadmix 32 (`NGSadmix -likes input.gz -K 3 -P 8 -seed 1`) needs 205 iterations and 15 s on
+the same data. It stops at −3865964.43, 0.12 below the optimum.
+
+In a benchmark with 25 random starts per K (8 threads, run with the same algorithm in the standalone ngsadmix
+development code), the expected time to reach the best solution
+was:
+
+| K | admixer | NGSadmix 32 | starts reaching the best solution (admixer / NGSadmix) |
+|---|---|---|---|
+| 3 | 2.5 s | 20 s | 100 % / 100 % |
+| 4 | 3.1 s | 85 s | 100 % / 48 % |
+| 5 | 6.3 s | 522 s | 64 % / 16 % |
+| 6 | 10.5 s | 883 s | 64 % / 12 % |
+
+## Testing
+
+```
+make test                                    # or: tests/run_tests.sh [--bin PATH] [-j N] [--update]
+```
+
+`tests/run_tests.sh` checks a build in about 10 seconds. Its exit code is the number of failed checks.
+It uses the data in `tests/data`:
+* `sim.bed`: 200 individuals, 4,000 SNPs, K = 3, with the true Q;
+* two beagle files made from `sim.bed` with `tools/simgl`, at 3× depth and at mixed 0.5–6× depth per
+  individual.
+
+It checks:
+* the unit tests (`tests/unit.cpp`): derivatives against finite differences for both data types, EM
+  monotonicity, feasibility of the steps, certain GLs = genotypes, the parser and the Q matching;
+* the command line and error handling;
+* for both input types: the log-likelihood against the references in `tests/expected.tsv` (±0.01; higher is
+  reported as IMPROVED), the optimality check, accuracy against the true Q, and the output formats;
+* that the same seed gives the same Q, and that 1 thread reaches the same optimum;
+* `--conv`, `--supervised`, `-P` (Q from a fixed P equals the joint fit), `--keep-missing` and `--hess=em`.
+
+Iterations and times are compared with the references, and large increases give a warning, not a failure.
+After an intended change of results, `tests/run_tests.sh --update` rewrites `tests/expected.tsv`.
+
+`tools/simgl` (`make tools/simgl`) simulates reads from PLINK genotypes and writes beagle GLs. Each
+individual gets a fixed depth, a depth drawn from a range (`--depth 0.5,6`), or a depth from a file. The
+reads are Poisson, with a sequencing error rate.
+
+## Differences from ADMIXTURE and NGSadmix
+
+**ADMIXTURE:**
 * Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random P,
   near-uniform Q, 5 EM steps, then a mini-batch warm-up.
 * Not implemented: cross-validation (`--cv`), bootstrap standard errors (`-B`), penalised estimation
-  (`-l`), haploid data, the EM method and the Fst printout. Input is PLINK `.bed` (or beagle GLs). Note that `-m` is
-  admixer's maximum number of runs, not ADMIXTURE's method option.
-* Default 8 threads instead of 1; the P matrix is gzip-compressed, the evalAdmix correlation of
+  (`-l`), haploid data, the EM method and the Fst printout. `-m` is admixer's maximum number of runs, not
+  ADMIXTURE's method option.
+* Default 8 threads instead of 1. The P matrix is gzip-compressed, the evalAdmix correlation of
   residuals is written by default, and the screen output is also saved to `data.K.log`.
-* The log ends with a first-order optimality (KKT) check of the solution: the largest step of the projected
-  gradient (P: gradient / N, Q: gradient / M), which is 0 at a KKT point. The example log above is from
-  version 0.1.0, which printed this check as "max KKT violation ... per individual/per SNP" (same values here).
+
+**NGSadmix:**
+* Same model, likelihood, filters (`--minMaf`, `--misTol`, `--minInd`) and bounds.
+* A different algorithm (see Algorithms) and stopping rule.
+* Missing GL entries are left out of the model by default (`--keep-missing` for NGSadmix's behaviour).
+* The output uses ADMIXTURE's names (`.Q`, `.P.gz`) instead of `.qopt` and `.fopt.gz`, with the same
+  content.
+* Not implemented: `-minLrt`, `-dymBound`, `-printInfo`, and starting values from files.
 
 ## Citation
 
-For the model and algorithm: Alexander, Novembre & Lange (2009) *Genome Research* 19:1655–1664.
+For the ADMIXTURE model and algorithm: Alexander, Novembre & Lange (2009) *Genome Research* 19:1655–1664.
+For the genotype likelihood model: Skotte, Korneliussen & Albrechtsen (2013) *Genetics* 195:693–702.
 For the evalAdmix output: Garcia-Erill & Albrechtsen (2020) *Molecular Ecology Resources* 20:936–949, and
 van Waaij et al. (2023) *Genetics* 225:iyad157.
