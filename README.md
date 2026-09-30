@@ -64,7 +64,7 @@ log-likelihood), and a run agrees with the best run if the largest difference in
 `--conv_thres`. It stops when X runs (including the best) agree, or after `--max_runs` runs. This is the
 Q-matrix criterion of popgenDK's `testQconv.R`, with an exact optimal matching of the ancestries.
 
-The output files are those of the best run. `data.K.conv` lists every run: seed, log-likelihood and its
+The output files are those of the best run. `data.K.conv` lists every run, sorted by log-likelihood (best run first): seed, log-likelihood and its
 difference to the best run, the distances to the best run's Q (largest absolute difference, mean
 per-individual sum of absolute differences, RMSE), iterations, seconds and whether it agrees.
 The log says whether the runs converged.

@@ -235,7 +235,10 @@ int main(int argc, char** argv) {
       FILE* fp = std::fopen(fn.c_str(), "w");
       if (!fp) throw std::runtime_error("cannot write " + fn);
       std::fprintf(fp, "run\tseed\tloglik\tloglik_diff\tmax_abs_dQ\tmean_sum_abs_dQ\trmse_dQ\titerations\tseconds\tagrees\n");
-      for (size_t r = 0; r < runs.size(); r++) {
+      std::vector<size_t> order(runs.size());  // best run first, then by decreasing log-likelihood
+      std::iota(order.begin(), order.end(), 0);
+      std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return runs[a].loglik > runs[b].loglik; });
+      for (size_t r : order) {
         const Run& u = runs[r];
         std::fprintf(fp, "%zu\t%lu\t%.6f\t%.6f\t%.6g\t%.6g\t%.6g\t%d\t%.2f\t%d\n", r + 1, u.seed, u.loglik,
                      u.loglik - runs[best].loglik, u.d.max_abs, u.d.mean_sum, u.d.rmse, u.iters, u.seconds, (int)u.agrees);
