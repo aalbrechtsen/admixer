@@ -119,7 +119,7 @@ Log written to blue_wildebeest_noLD_admixer.7.log
 ```
 
 <details>
-<summary>Full screen output of the run (click to expand)</summary>
+<summary>Full screen output = log file <code>blue_wildebeest_noLD_admixer.7.log</code> (click to expand)</summary>
 
 ```
 admixer 0.1.0
