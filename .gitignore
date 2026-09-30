@@ -1,0 +1,5 @@
+admixer
+*.o
+*.Q
+*.P
+*.corres.txt
