@@ -44,8 +44,8 @@ extension (`data`) as prefix:
 * `data.K.Q`: admixture proportions, one row per individual;
 * `data.K.P.gz`: ancestral allele frequencies, one row per SNP (gzip-compressed; `--no-gzip` for `data.K.P`).
   For beagle input, the rows are the sites that pass the filters, in input order;
-* `data.K.corres.txt` (PLINK input): the evalAdmix correlation of residuals between individuals (corrected
-  estimator), for checking the model fit; plot it with evalAdmix's `visFuns.R`. It takes a few seconds for
+* `data.K.corres.txt`: the evalAdmix correlation of residuals between individuals (corrected estimator; for
+  genotype likelihoods on the posterior expected genotypes), for checking the model fit; plot it with evalAdmix's `visFuns.R`. It takes a few seconds for
   thousands of individuals but needs about 48 N² bytes of memory, so it is skipped above 20,000 individuals
   unless `--evaladmix` is given;
 * `data.K.log`: the log printed to the screen (command line, progress, final log-likelihood, optimality check).
@@ -62,8 +62,8 @@ extension (`data`) as prefix:
 | `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
-| `--no-evaladmix` | PLINK input: do not compute the evalAdmix correlation of residuals |
-| `--evaladmix` | PLINK input: compute it even for more than 20,000 individuals |
+| `--no-evaladmix` | do not compute the evalAdmix correlation of residuals |
+| `--evaladmix` | compute it even for more than 20,000 individuals |
 | `--minMaf=X` | beagle input: keep sites with X < MAF < 1 − X (default 0.05, as NGSadmix; 0 keeps all) |
 | `--misTol=X` | beagle input: GLs with max − min < X count as missing (default 0.05, as NGSadmix) |
 | `--minInd=X` | beagle input: keep sites with more than X individuals with data (default 0 = off) |
@@ -124,8 +124,15 @@ L_ij = GL0 (1 − h)² + GL1 · 2h(1 − h) + GL2 · h² (Skotte, Korneliussen &
 * **Missing data:** GLs with max − min < 0.05 (`--misTol`, NGSadmix's definition of missing) are left out of
   the model, and their nearly constant likelihood is added as a constant. The log also gives the exact
   log-likelihood over all entries, which is NGSadmix's objective.
-* **Not yet available:** the evalAdmix correlation of residuals is not computed for genotype likelihoods;
-  use evalAdmix with `-beagle` on the output.
+* **evalAdmix correlation of residuals:** computed by default, as for genotypes. It applies the corrected
+  estimator to the posterior expected genotypes E[g | GL, h], with the fitted model as prior.
+  * Every entry enters the projection; an entry without data has E[g] = 2h, which the projection removes, so
+    nothing is imputed.
+  * The correlations use only the sites where both individuals have data, as `evalAdmix -beagle` does.
+
+  In simulations at 1–8× and mixed 0.5–6× depth, its accuracy against the correlations from the true
+  genotypes matched `evalAdmix -beagle` (within 7 %, unbiased, no depth artefacts), at about 5 % of its cost
+  (0.2–0.3 s vs 10–20 s for 200 individuals). On the NGSadmix tutorial data the two agree with r = 0.999.
 
 **Common to both.**
 * Every pass over the data works on tiles of SNPs × individuals: a matrix product gives the tile of
@@ -341,13 +348,14 @@ admixer --seed 1 -j10 input.gz 3
 The MAF filter keeps 49,475 sites, and 3.3 % of the GL entries are missing. The end of the log:
 
 ```
-26 (QN/Block) 	Elapsed: 1.220	Loglikelihood: -3865964.313412	(delta): 1.29216e-05
+26 (QN/Block) 	Elapsed: 1.221	Loglikelihood: -3865964.313412	(delta): 1.29216e-05
 Summary: 
 Converged in 26 iterations (2.112 sec)
 Loglikelihood: -3865964.313412
 Loglikelihood over all GL entries, missing ones included (as NGSadmix): -3865964.313411
 Optimality check (max projected gradient): P 2.93e-05, Q 3.12e-11
 Writing output files.
+evalAdmix correlation of residuals written to input.3.corres.txt (0.25 sec)
 Log written to input.3.log
 ```
 
@@ -379,10 +387,13 @@ It uses the data in `tests/data`:
 
 It checks:
 * the unit tests (`tests/unit.cpp`): derivatives against finite differences for both data types, EM
-  monotonicity, feasibility of the steps, certain GLs = genotypes, the parser and the Q matching;
+  monotonicity, feasibility of the steps, certain GLs = genotypes (likelihood, gradient and evalAdmix), the parser
+  and the Q matching;
 * the command line and error handling;
 * for both input types: the log-likelihood against the references in `tests/expected.tsv` (±0.01; higher is
   reported as IMPROVED), the optimality check, accuracy against the true Q, and the output formats;
+* the evalAdmix correlations for GLs: ≈ 0 under the correct model, and the same pattern as from the true
+  genotypes for a misfit (K = 2 for 3 populations, `sim2000.bed` with the GL fit's P);
 * that the same seed gives the same Q, and that 1 thread reaches the same optimum;
 * `--conv`, `--supervised`, `-P` (Q from a fixed P equals the joint fit), `--keep-missing` and `--hess=em`.
 

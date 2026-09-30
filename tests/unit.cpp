@@ -4,12 +4,14 @@
 //     decreases the log-likelihood; block relaxation + projection keep x feasible.
 //  3. Consistency: GLs that are certain (one-hot) give the genotype model's gradient, and a log-likelihood
 //     that differs only by log 2 per heterozygote (the binomial coefficient).
+//     The GL evalAdmix estimator on certain GLs reproduces the genotype estimator.
 //  4. The beagle number parser and the Q column matching.
 #include <cmath>
 #include <cstdio>
 #include <random>
 
 #include "../src/beagle.hpp"
+#include "../src/evaladmix.hpp"
 #include "../src/io.hpp"
 #include "../src/model.hpp"
 #include "../src/multistart.hpp"
@@ -142,6 +144,51 @@ int main() {
     double mx = 0;
     for (size_t t = 0; t < gg.size(); t++) mx = std::max(mx, std::fabs(gg[t] - gl[t]) / (1 + std::fabs(gg[t])));
     check(mx < 1e-9, "gradients are equal", mx);
+    // evalAdmix: certain GLs give the genotype corrected estimator, computed with the same estimate of the model
+    // variance D (the GL estimator uses mean (g - 2h)^2; the genotype estimator mean g(2 - g), which estimates the
+    // same 2h(1-h) and differs only by sampling noise). Data drawn from the model.
+    const int M2 = 3000, N2 = 30, K2 = 3;
+    std::vector<double> x2((size_t)(M2 + N2) * K2);
+    for (int j = 0; j < M2 * K2; j++) x2[j] = 0.1 + 0.8 * U(rng);
+    for (int i = 0; i < N2; i++) {
+      double s = 0;
+      for (int k = 0; k < K2; k++) s += (x2[(size_t)M2 * K2 + i * K2 + k] = std::pow(U(rng), 2));
+      for (int k = 0; k < K2; k++) x2[(size_t)M2 * K2 + i * K2 + k] /= s;
+    }
+    Genotypes Gf;
+    Gf.M = M2, Gf.N = N2;
+    Gf.G.resize((size_t)M2 * N2);
+    GLData Cf;
+    Cf.M = M2, Cf.N = N2;
+    Cf.gl.assign((size_t)M2 * N2 * 3, 0.f);
+    Cf.keep.assign((size_t)M2 * N2, 1);
+    for (int j = 0; j < M2; j++)
+      for (int i = 0; i < N2; i++) {
+        double h = 0;
+        for (int k = 0; k < K2; k++) h += x2[(size_t)M2 * K2 + i * K2 + k] * x2[(size_t)j * K2 + k];
+        const int g = (U(rng) < h) + (U(rng) < h);
+        Gf.G[(size_t)j * N2 + i] = g;
+        Cf.gl[((size_t)j * N2 + i) * 3 + g] = 1;
+      }
+    Gf.count_observed();
+    Cf.nobs = Gf.nobs;
+    // same values and the GL estimator's D = mean (g - 2h)^2, through the shared core: must be identical
+    std::vector<double> dgl(N2, 0.0);
+    for (int j = 0; j < M2; j++)
+      for (int i = 0; i < N2; i++) {
+        double h = 0;
+        for (int k = 0; k < K2; k++) h += x2[(size_t)M2 * K2 + i * K2 + k] * x2[(size_t)j * K2 + k];
+        const double r = Gf.G[(size_t)j * N2 + i] - 2 * h;
+        dgl[i] += r * r / M2;
+      }
+    const auto cg = evaladmix_core(M2, N2, x2.data() + (size_t)M2 * K2, K2, dgl, 1, [&](int j0, int jn, double* X, uint8_t* O) {
+      for (size_t t = 0; t < (size_t)jn * N2; t++) X[t] = Gf.G[(size_t)j0 * N2 + t], O[t] = 1;
+    });
+    const auto cl = evaladmix_gl(Cf, x2.data(), x2.data() + (size_t)M2 * K2, K2, 0.05, 1e-9, 1 - 1e-9, 1);
+    double me = 0;
+    for (size_t t = 0; t < cg.size(); t++)
+      if (!std::isnan(cg[t])) me = std::max(me, std::fabs(cg[t] - cl[t]));
+    check(me < 1e-9, "evalAdmix: certain GLs give the genotype estimator (same D)", me);
   }
 
   // 4. parser and Q matching

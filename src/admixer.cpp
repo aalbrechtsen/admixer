@@ -34,8 +34,8 @@ static void usage(int code) {
       "  inputFile  a PLINK .bed file (with .bim and .fam next to it), or a beagle genotype likelihood file\n"
       "             (.beagle.gz, .beagle or any other .gz file, as written by ANGSD and read by NGSadmix)\n"
       "  K          number of ancestral populations\n\n"
-      "Output (working directory): inputBasename.K.Q, inputBasename.K.P.gz, inputBasename.K.log and, for\n"
-      "PLINK input, inputBasename.K.corres.txt\n\n"
+      "Output (working directory): inputBasename.K.Q, inputBasename.K.P.gz, inputBasename.K.corres.txt and\n"
+      "inputBasename.K.log\n\n"
       "options:\n"
       "  -jX, -j X           use X threads (default 8)\n"
       "  --seed=X, -s X      random seed (default 43; 'time' uses the clock)\n"
@@ -47,9 +47,9 @@ static void usage(int code) {
       "                      their population; K must equal the number of population names\n"
       "  -P                  projection: reads inputBasename.K.P.in (or .P.in.gz) and estimates Q with P fixed\n"
       "  --no-evaladmix      do not write NAME.K.corres.txt, the evalAdmix correlation of residuals\n"
-      "                      (corrected estimator of van Waaij et al. 2023; plot with evalAdmix's visFuns.R).\n"
-      "                      It needs memory ~ 48 N^2 bytes, so it is skipped for N > 20000 individuals\n"
-      "                      unless --evaladmix is given. PLINK input only.\n"
+      "                      (corrected estimator of van Waaij et al. 2023, for GLs on the posterior expected\n"
+      "                      genotypes; plot with evalAdmix's visFuns.R). It needs memory ~ 48 N^2 bytes, so it\n"
+      "                      is skipped for N > 20000 individuals unless --evaladmix is given\n"
       "  --conv X            convergence test with several starts (seeds seed, seed+1, ...): stop when X runs\n"
       "                      agree with the best run (highest likelihood); writes the best run and NAME.K.conv\n"
       "  -m X, --max_runs=X  with --conv: at most X runs (default 10)\n"
@@ -242,22 +242,20 @@ static void analyse(Data& D, Options& o, double t0) {
   for (int j = 0; j < D.M; j++)
     std::copy(x.begin() + (size_t)j * K, x.begin() + (size_t)(j + 1) * K, Pout.begin() + (size_t)perm[j] * K);
   write_matrix(pre + (o.gz ? ".P.gz" : ".P"), Pout.data(), D.M, K, o.gz);
-  if constexpr (std::is_same_v<Data, Genotypes>) {
-    if (o.evaladmix && D.N > 20000 && !o.evaladmix_forced) {
-      say("evalAdmix skipped: %d individuals would need ~%.0f GB of memory (use --evaladmix to force)\n", D.N,
-          48.0 * D.N * D.N / 1e9);
-      o.evaladmix = false;
-    }
-    if (o.evaladmix) {
-      const double te = omp_get_wtime();
-      const auto cor = evaladmix_corrected(D, x.data() + m.nP, K, o.threads);
-      write_corres(pre + ".corres.txt", cor, D.N);
-      say("evalAdmix correlation of residuals written to %s.corres.txt (%.2f sec)\n", pre.c_str(),
-          omp_get_wtime() - te);
-    }
-  } else {
-    if (o.evaladmix_forced)
-      say("evalAdmix is not available for genotype likelihoods yet (run evalAdmix -beagle on the output)\n");
+  if (o.evaladmix && D.N > 20000 && !o.evaladmix_forced) {
+    say("evalAdmix skipped: %d individuals would need ~%.0f GB of memory (use --evaladmix to force)\n", D.N,
+        48.0 * D.N * D.N / 1e9);
+    o.evaladmix = false;
+  }
+  if (o.evaladmix) {
+    const double te = omp_get_wtime();
+    std::vector<double> cor;
+    if constexpr (std::is_same_v<Data, Genotypes>)
+      cor = evaladmix_corrected(D, x.data() + m.nP, K, o.threads);
+    else
+      cor = evaladmix_gl(D, x.data(), x.data() + m.nP, K, o.glf.misTol, m.PMIN, m.PMAX, o.threads);
+    write_corres(pre + ".corres.txt", cor, D.N);
+    say("evalAdmix correlation of residuals written to %s.corres.txt (%.2f sec)\n", pre.c_str(), omp_get_wtime() - te);
   }
 }
 

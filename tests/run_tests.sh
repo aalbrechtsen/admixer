@@ -45,7 +45,11 @@ pass() { printf "  %-62s ok\n" "$1"; }
 fail() { printf "  %-62s FAILED %s\n" "$1" "${2:-}"; FAILS=$((FAILS + 1)); }
 warn() { printf "  %-62s warning: %s\n" "$1" "$2"; WARNS=$((WARNS + 1)); }
 # numeric comparison: ok "description" "awk condition using a, b" a b
-ok() { if awk -v a="$3" -v b="${4:-0}" "BEGIN{exit !($2)}"; then pass "$1"; else fail "$1" "(values: $3 ${4:-})"; fi; }
+# (a value that is not a finite number, e.g. nan or empty, always fails)
+ok() {
+  if [[ $3 =~ ^[-+]?[0-9.]+([eE][-+]?[0-9]+)?$ ]] && awk -v a="$3" -v b="${4:-0}" "BEGIN{exit !($2)}"; then pass "$1"
+  else fail "$1" "(values: $3 ${4:-})"; fi
+}
 field() { grep -m1 "^$2" "$1" | sed "s/^$2 *//"; }   # value after a log prefix
 ll_of() { field "$1" "Loglikelihood:" | awk '{print $1}'; }
 iters_of() { grep -m1 "^Converged in" "$1" | awk '{print $3}'; }
@@ -137,7 +141,19 @@ for d in d3 mixed; do
   ok "$n: full log-likelihood reported" "a == 1" "$(grep -c '^Loglikelihood over all GL entries' $n.3.log)"
   read -r qmax qms qrmse < <("$ROOT/tests/qdist" $n.3.Q sim.true.Q 3)
   ok "$n: Q close to the truth (RMSE < 0.12)" "a < 0.12" "$qrmse"
+  ok "$n: evalAdmix correlations 200 x 200" "a == 40000" "$(awk '{n+=NF} END{print n}' $n.3.corres.txt)"
+  ok "$n: evalAdmix correlations ~0 under the correct model (|mean| < 0.01)" "a < 0.01 && a > -0.01" \
+    "$(awk '{for(k=1;k<=NF;k++) if ($k != "NA") {s+=$k; n++}} END{print s/n}' $n.3.corres.txt)"
 done
+# evalAdmix for GLs against the genotypes: a misfit (K = 2 for 3 populations) of the first 2000 SNPs. The GL
+# fit's P is given to the true genotypes (sim2000.bed, projection -P), so both evaluate the same model; the GL
+# correlations must show the same pattern as the genotype ones
+run gl2 sim_d3.beagle.gz 2 -s 1 --minMaf=0
+zcat gl2.2.P.gz > sim2000.2.P.in
+run gt2 -P sim2000.bed 2 -s 1
+rm -f sim2000.2.P.in
+ok "evalAdmix GL vs genotypes, misfit K = 2: correlation of the matrices > 0.75" "a > 0.75" \
+  "$(paste gt2.2.corres.txt gl2.2.corres.txt | awk '{n=NF/2; for(k=1;k<=n;k++) if ($k != "NA") {x=$k; y=$(k+n); sx+=x; sy+=y; sxx+=x*x; syy+=y*y; sxy+=x*y; m++}} END{print (sxy-sx*sy/m)/sqrt((sxx-sx*sx/m)*(syy-sy*sy/m))}')"
 run bgl_rep sim_d3.beagle.gz 3 -s 1
 ok "beagle: same seed gives the same Q" "a == 0" "$(cmp -s bgl_d3.3.Q bgl_rep.3.Q; echo $?)"
 run bgl_keep sim_mixed.beagle.gz 3 -s 1 --keep-missing
