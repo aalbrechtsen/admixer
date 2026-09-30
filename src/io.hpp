@@ -1,11 +1,15 @@
 // admixer: input (PLINK .bed/.bim/.fam) and output (.Q/.P matrices).
 #pragma once
+#include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <zlib.h>
 
 struct Genotypes {
   int M = 0, N = 0;        // SNPs, individuals
@@ -76,16 +80,43 @@ inline Genotypes read_genotypes(const std::string& file) {
   throw std::runtime_error("input must be a PLINK .bed file (with .bim and .fam): " + file);
 }
 
-// Whitespace-separated rows x K matrix (ADMIXTURE .Q/.P format).
+// Whitespace-separated rows x K matrix (ADMIXTURE .Q/.P format); plain or gzip-compressed.
 inline void read_matrix(const std::string& fn, double* A, size_t rows, int K) {
-  FILE* fp = std::fopen(fn.c_str(), "r");
+  gzFile fp = gzopen(fn.c_str(), "rb");  // reads uncompressed files transparently
   if (!fp) throw std::runtime_error("cannot open " + fn);
-  for (size_t t = 0; t < rows * K; t++)
-    if (std::fscanf(fp, "%lf", &A[t]) != 1)
-      throw std::runtime_error(fn + ": expected " + std::to_string(rows) + " x " + std::to_string(K) + " values");
-  std::fclose(fp);
+  std::string tok;
+  size_t t = 0;
+  int c;
+  while (t < rows * K && (c = gzgetc(fp)) != -1) {
+    if (std::isspace(c)) {
+      if (!tok.empty()) A[t++] = std::strtod(tok.c_str(), nullptr), tok.clear();
+    } else {
+      tok += (char)c;
+    }
+  }
+  if (t < rows * K && !tok.empty()) A[t++] = std::strtod(tok.c_str(), nullptr);
+  gzclose(fp);
+  if (t != rows * K)
+    throw std::runtime_error(fn + ": expected " + std::to_string(rows) + " x " + std::to_string(K) + " values");
 }
-inline void write_matrix(const std::string& fn, const double* A, size_t rows, int K) {
+// Writes the matrix with 6 decimals; gzip-compressed if gz.
+inline void write_matrix(const std::string& fn, const double* A, size_t rows, int K, bool gz = false) {
+  std::string buf;
+  char v[32];
+  if (gz) {
+    gzFile fp = gzopen(fn.c_str(), "wb6");
+    if (!fp) throw std::runtime_error("cannot write " + fn);
+    for (size_t r = 0; r < rows; r++) {
+      buf.clear();
+      for (int k = 0; k < K; k++) {
+        std::snprintf(v, sizeof v, "%.6f%c", A[r * K + k], k + 1 == K ? '\n' : ' ');
+        buf += v;
+      }
+      gzwrite(fp, buf.data(), buf.size());
+    }
+    gzclose(fp);
+    return;
+  }
   FILE* fp = std::fopen(fn.c_str(), "w");
   if (!fp) throw std::runtime_error("cannot write " + fn);
   for (size_t r = 0; r < rows; r++)

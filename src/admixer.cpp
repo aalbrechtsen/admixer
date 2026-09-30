@@ -18,6 +18,7 @@
 #include "evaladmix.hpp"
 #include "fit.hpp"
 #include "io.hpp"
+#include "log.hpp"
 #include "model.hpp"
 
 static const char* VERSION = "0.1.0";
@@ -28,18 +29,21 @@ static void usage(int code) {
       "usage: admixer [options] inputFile K\n\n"
       "  inputFile  a PLINK .bed file (with .bim and .fam next to it)\n"
       "  K          number of ancestral populations\n\n"
-      "Output: inputBasename.K.Q and inputBasename.K.P in the working directory (as ADMIXTURE)\n\n"
+      "Output (working directory): inputBasename.K.Q, inputBasename.K.P.gz and inputBasename.K.corres.txt\n\n"
       "options:\n"
       "  -jX, -j X           use X threads (default 8)\n"
       "  --seed=X, -s X      random seed (default 43; 'time' uses the clock)\n"
       "  -C=X, -C X          stop when the log-likelihood improves by less than X (default 1e-4)\n"
-      "  -o NAME, --out=NAME output prefix NAME instead of inputBasename (NAME.K.Q, NAME.K.P)\n"
+      "  -o NAME, --out=NAME output prefix NAME instead of inputBasename\n"
+      "  --no-gzip           write NAME.K.P uncompressed instead of NAME.K.P.gz\n"
       "  --supervised        supervised analysis: reads inputBasename.pop (one line per individual,\n"
       "                      a population name, or '-' if unknown); labelled individuals are held at\n"
       "                      their population; K must equal the number of population names\n"
-      "  -P                  projection: reads inputBasename.K.P.in and estimates Q with P held fixed\n"
-      "  --evaladmix         also write NAME.K.corres.txt, the evalAdmix correlation of residuals\n"
-      "                      (corrected estimator of van Waaij et al. 2023; plot with evalAdmix's visFuns.R)\n"
+      "  -P                  projection: reads inputBasename.K.P.in (or .P.in.gz) and estimates Q with P fixed\n"
+      "  --no-evaladmix      do not write NAME.K.corres.txt, the evalAdmix correlation of residuals\n"
+      "                      (corrected estimator of van Waaij et al. 2023; plot with evalAdmix's visFuns.R).\n"
+      "                      It needs memory ~ 48 N^2 bytes, so it is skipped for N > 20000 individuals\n"
+      "                      unless --evaladmix is given\n"
       "  -h, --help          this help\n",
       VERSION);
   std::exit(code);
@@ -57,7 +61,7 @@ int main(int argc, char** argv) {
   FitSettings fs;
   int threads = 8;
   std::string seed_s = "43", out, input;
-  bool supervised = false, projection = false, evaladmix = false;
+  bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true;
   int K = 0;
   std::vector<std::string> pos;
   for (int a = 1; a < argc; a++) {
@@ -66,7 +70,9 @@ int main(int argc, char** argv) {
     else if (o.rfind("--seed", 0) == 0) seed_s = opt_value(argc, argv, a, "--seed");
     else if (o.rfind("--out", 0) == 0) out = opt_value(argc, argv, a, "--out");
     else if (o == "--supervised") supervised = true;
-    else if (o == "--evaladmix") evaladmix = true;
+    else if (o == "--evaladmix") evaladmix = evaladmix_forced = true;
+    else if (o == "--no-evaladmix") evaladmix = false;
+    else if (o == "--no-gzip") gz = false;
     else if (o.rfind("--max-iter", 0) == 0) fs.max_iter = std::atoi(opt_value(argc, argv, a, "--max-iter").c_str());
     else if (o == "-P") projection = true;
     else if (o.rfind("-j", 0) == 0) threads = std::atoi(opt_value(argc, argv, a, "-j").c_str());
@@ -85,17 +91,23 @@ int main(int argc, char** argv) {
   fs.seed = seed_s == "time" ? (unsigned long)std::time(nullptr) : std::strtoul(seed_s.c_str(), nullptr, 10);
   if (out.empty()) out = basename_noext(input);
   omp_set_num_threads(threads);
+  const std::string logname = out + "." + std::to_string(K) + ".log";
+  log_file() = std::fopen(logname.c_str(), "w");
+  if (!log_file()) std::fprintf(stderr, "Warning: cannot write log file %s\n", logname.c_str());
+  std::string cmd;
+  for (int a = 0; a < argc; a++) cmd += (a ? " " : "") + std::string(argv[a]);
 
   try {
-    std::printf("admixer %s\n", VERSION);
+    say("admixer %s\n", VERSION);
+    say("Command: %s\n", cmd.c_str());
     const double t0 = omp_get_wtime();
     Genotypes D = read_genotypes(input);
-    std::printf("Random seed: %lu\n", fs.seed);
-    std::printf("Point estimation method: Block relaxation algorithm (Newton/QP steps, BLAS kernels)\n");
-    std::printf("Convergence acceleration algorithm: QuasiNewton, %d secant conditions\n", fs.qn_secants);
-    std::printf("Point estimation will terminate when objective function delta < %g\n", fs.tol);
-    std::printf("Size of G: %dx%d\n", D.N, D.M);
-    std::printf("Threads: %d\n", threads);
+    say("Random seed: %lu\n", fs.seed);
+    say("Point estimation method: Block relaxation algorithm (Newton/QP steps, BLAS kernels)\n");
+    say("Convergence acceleration algorithm: QuasiNewton, %d secant conditions\n", fs.qn_secants);
+    say("Point estimation will terminate when objective function delta < %g\n", fs.tol);
+    say("Size of G: %dx%d\n", D.N, D.M);
+    say("Threads: %d\n", threads);
 
     // Supervised mode: population labels from inputBasename.pop, columns in order of first appearance
     std::vector<int> label(D.N, -1);
@@ -118,7 +130,7 @@ int main(int argc, char** argv) {
       if (i != D.N) throw std::runtime_error(fn + " has fewer lines than individuals");
       if ((int)id.size() != K)
         throw std::runtime_error(fn + " names " + std::to_string(id.size()) + " populations but K = " + std::to_string(K));
-      std::printf("Supervised analysis mode: %d labelled individuals\n",
+      say("Supervised analysis mode: %d labelled individuals\n",
                   (int)std::count_if(label.begin(), label.end(), [](int l) { return l >= 0; }));
     }
 
@@ -138,10 +150,11 @@ int main(int argc, char** argv) {
     Vec x(m.size());
     std::mt19937_64 rng(fs.seed);
     if (projection) {
-      const std::string fn = strip_extension(input) + "." + std::to_string(K) + ".P.in";
+      std::string fn = strip_extension(input) + "." + std::to_string(K) + ".P.in";
+      if (!std::ifstream(fn) && std::ifstream(fn + ".gz")) fn += ".gz";
       read_matrix(fn, x.data(), D.M, K);
       m.pfix = true;
-      std::printf("Projection mode: P read from %s and held fixed\n", fn.c_str());
+      say("Projection mode: P read from %s and held fixed\n", fn.c_str());
     }
     if (supervised) {
       for (int i = 0; i < D.N; i++)
@@ -165,28 +178,36 @@ int main(int argc, char** argv) {
     }
     const FitResult r = fit.run(x);
     const auto kkt = m.kkt(x.data());
-    std::printf("Summary: \n");
-    std::printf("Converged in %d iterations (%.3f sec)\n", r.iterations, omp_get_wtime() - t0);
-    std::printf("Loglikelihood: %f\n", r.loglik);
-    std::printf("Optimality check (max KKT violation): P %.2e per individual, Q %.2e per SNP\n", kkt.first, kkt.second);
+    say("Summary: \n");
+    say("Converged in %d iterations (%.3f sec)\n", r.iterations, omp_get_wtime() - t0);
+    say("Loglikelihood: %f\n", r.loglik);
+    say("Optimality check (max KKT violation): P %.2e per individual, Q %.2e per SNP\n", kkt.first, kkt.second);
 
-    std::printf("Writing output files.\n");
+    say("Writing output files.\n");
     const std::string pre = out + "." + std::to_string(K);
     write_matrix(pre + ".Q", x.data() + m.nP, D.N, K);
     std::vector<double> Pout(m.nP);
     for (int j = 0; j < D.M; j++)
       std::copy(x.begin() + (size_t)j * K, x.begin() + (size_t)(j + 1) * K, Pout.begin() + (size_t)perm[j] * K);
-    write_matrix(pre + ".P", Pout.data(), D.M, K);
+    write_matrix(pre + (gz ? ".P.gz" : ".P"), Pout.data(), D.M, K, gz);
+    if (evaladmix && D.N > 20000 && !evaladmix_forced) {
+      say("evalAdmix skipped: %d individuals would need ~%.0f GB of memory (use --evaladmix to force)\n", D.N,
+                  48.0 * D.N * D.N / 1e9);
+      evaladmix = false;
+    }
     if (evaladmix) {
       const double te = omp_get_wtime();
       const auto cor = evaladmix_corrected(D, x.data() + m.nP, K, threads);
       write_corres(pre + ".corres.txt", cor, D.N);
-      std::printf("evalAdmix correlation of residuals written to %s.corres.txt (%.2f sec)\n", pre.c_str(),
+      say("evalAdmix correlation of residuals written to %s.corres.txt (%.2f sec)\n", pre.c_str(),
                   omp_get_wtime() - te);
     }
+    say("Log written to %s\n", logname.c_str());
   } catch (const std::exception& e) {
-    std::fprintf(stderr, "Error: %s\n", e.what());
+    say_error(e.what());
+    if (log_file()) std::fclose(log_file());
     return 1;
   }
+  if (log_file()) std::fclose(log_file());
   return 0;
 }

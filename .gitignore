@@ -2,4 +2,7 @@ admixer
 *.o
 *.Q
 *.P
+*.P.gz
 *.corres.txt
+*.log
+admixer_new

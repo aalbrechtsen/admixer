@@ -11,6 +11,7 @@
 #include <random>
 #include <vector>
 
+#include "log.hpp"
 #include "model.hpp"
 
 using Vec = std::vector<double>;
@@ -35,8 +36,9 @@ class Fitter {
  public:
   Fitter(Model& m, const FitSettings& s) : m_(m), s_(s) {}
 
-  // Random start (as ADMIXTURE): P uniform in [0.05, 0.95], Q rows from a flat Dirichlet.
-  // Rows of Q marked fixed and, in projection mode, P are left as given.
+  // Random start: P uniform in [0.05, 0.95]; each row of Q is a vector of Exp(1) draws projected onto
+  // the simplex (which gives sparse rows: most individuals start with one or two ancestries). This is the
+  // start used in all benchmarks. Rows of Q marked fixed and, in projection mode, P are left as given.
   void init_random(Vec& x, std::mt19937_64& rng) const {
     std::uniform_real_distribution<double> unif(0.0, 1.0);
     std::exponential_distribution<double> expo(1.0);
@@ -46,9 +48,8 @@ class Fitter {
     for (int i = 0; i < m_.D.N; i++) {
       if (m_.fixed(i)) continue;
       double* q = x.data() + m_.nP + (size_t)i * K;
-      double s = 0;
-      for (int k = 0; k < K; k++) s += (q[k] = expo(rng));
-      for (int k = 0; k < K; k++) q[k] /= s;
+      for (int k = 0; k < K; k++) q[k] = expo(rng);
+      project_simplex(K, q, QMIN);
     }
     m_.project(x.data());
   }
@@ -56,7 +57,7 @@ class Fitter {
   FitResult run(Vec& x) {
     const double t0 = omp_get_wtime();
     Vec y(x.size());
-    std::printf("Performing five EM steps to prime main algorithm\n");
+    say("Performing five EM steps to prime main algorithm\n");
     double prev = -INFINITY;
     for (int it = 1; it <= s_.prime; it++) {
       const double ll = m_.em(x.data(), y.data());
@@ -65,9 +66,9 @@ class Fitter {
       prev = ll;
     }
     double ll = m_.loglik(x.data());
-    std::printf("Initial loglikelihood: %f\n", ll);
+    say("Initial loglikelihood: %f\n", ll);
     if (s_.minibatch > 1 && !m_.pfix) warmup(x, t0);
-    std::printf("Starting main algorithm\n");
+    say("Starting main algorithm\n");
     FitResult r = qn(x, t0);
     r.seconds = omp_get_wtime() - t0;
     return r;
@@ -78,9 +79,8 @@ class Fitter {
   FitSettings s_;
 
   static void log_line(int it, const char* what, double ll, double delta, double t0) {
-    std::printf("%d (%s) \tElapsed: %.3f\tLoglikelihood: %.6f\t(delta): %g\n", it, what, omp_get_wtime() - t0, ll,
+    say("%d (%s) \tElapsed: %.3f\tLoglikelihood: %.6f\t(delta): %g\n", it, what, omp_get_wtime() - t0, ll,
                 delta);
-    std::fflush(stdout);
   }
   static double dot(const Vec& a, const Vec& b) {
     double s = 0;
