@@ -1,4 +1,4 @@
-// admixer: fitting. Random start -> 5 EM steps -> mini-batch block-relaxation warm-up ->
+// admixer: fitting. Near-uniform random start -> 5 EM steps -> mini-batch block-relaxation warm-up ->
 // block relaxation with quasi-Newton acceleration (ADMIXTURE's algorithm) until the log-likelihood
 // improves by less than tol per iteration.
 #pragma once
@@ -37,20 +37,20 @@ class Fitter {
   Fitter(Model& m, const FitSettings& s) : m_(m), s_(s) {}
   bool verbose = true;  // print every iteration (false: silent; the caller prints a summary)
 
-  // Random start: P uniform in [0.05, 0.95]; each row of Q is a vector of Exp(1) draws projected onto
-  // the simplex (which gives sparse rows: most individuals start with one or two ancestries). This is the
-  // start used in all benchmarks. Rows of Q marked fixed and, in projection mode, P are left as given.
+  // Random start: P uniform in [0.05, 0.95]; each row of Q near uniform, 1/K with 1% relative noise. A sparse
+  // start (most Q entries at the lower bound) assigns individuals to random ancestries and traps many runs in
+  // local optima. Rows of Q marked fixed and, in projection mode, P are left as given.
   void init_random(Vec& x, std::mt19937_64& rng) const {
     std::uniform_real_distribution<double> unif(0.0, 1.0);
-    std::exponential_distribution<double> expo(1.0);
     const int K = m_.K;
     if (!m_.pfix)
       for (size_t t = 0; t < m_.nP; t++) x[t] = 0.05 + 0.9 * unif(rng);
     for (int i = 0; i < m_.D.N; i++) {
       if (m_.fixed(i)) continue;
       double* q = x.data() + m_.nP + (size_t)i * K;
-      for (int k = 0; k < K; k++) q[k] = expo(rng);
-      project_simplex(K, q, QMIN);
+      double sum = 0;
+      for (int k = 0; k < K; k++) sum += (q[k] = 1 + 0.01 * unif(rng));
+      for (int k = 0; k < K; k++) q[k] /= sum;
     }
     m_.project(x.data());
   }

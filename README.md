@@ -74,8 +74,8 @@ Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... unti
 
 ## Differences from ADMIXTURE
 
-* Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random,
-  5 EM steps, then a mini-batch warm-up.
+* Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random P,
+  near-uniform Q, 5 EM steps, then a mini-batch warm-up.
 * Not implemented: cross-validation (`--cv`), bootstrap standard errors (`-B`), penalised estimation
   (`-l`), haploid data, the EM method and the Fst printout. Only PLINK `.bed` input. Note that `-m` is
   admixer's maximum number of runs, not ADMIXTURE's method option.
