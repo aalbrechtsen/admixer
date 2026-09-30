@@ -6,3 +6,4 @@ admixer
 *.corres.txt
 *.log
 admixer_new
+*.conv

@@ -49,15 +49,36 @@ working directory, in the same format as ADMIXTURE:
 | `-P` | projection; reads `data.K.P.in` (or `data.K.P.in.gz`) and estimates Q with P held fixed |
 | `--no-evaladmix` | do not compute the evalAdmix correlation of residuals |
 | `--evaladmix` | compute it even for more than 20,000 individuals |
+| `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
+| `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
+| `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
 
 Example: `admixer -j16 data.bed 5`
+
+### Convergence test with several starts
+
+Hard data sets can have several local optima, so one run may not find the best solution.
+`--conv X` runs admixer with consecutive seeds (`--seed`, `--seed`+1, ...), reading the data only once.
+After each run it matches the ancestries of every run to those of the best run so far (highest
+log-likelihood), and a run agrees with the best run if the largest difference in any Q entry is below
+`--conv_thres`. It stops when X runs (including the best) agree, or after `--max_runs` runs. This is the
+Q-matrix criterion of popgenDK's `testQconv.R`, with an exact optimal matching of the ancestries.
+
+The output files are those of the best run. `data.K.conv` lists every run: seed, log-likelihood and its
+difference to the best run, the distances to the best run's Q (largest absolute difference, mean
+per-individual sum of absolute differences, RMSE), iterations, seconds and whether it agrees.
+The log says whether the runs converged.
+
+Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... until 3 runs agree
+(at most 10 runs).
 
 ## Differences from ADMIXTURE
 
 * Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random,
   5 EM steps, then a mini-batch warm-up.
 * Not implemented: cross-validation (`--cv`), bootstrap standard errors (`-B`), penalised estimation
-  (`-l`), haploid data, the EM method (`-m em`) and the Fst printout. Only PLINK `.bed` input.
+  (`-l`), haploid data, the EM method and the Fst printout. Only PLINK `.bed` input. Note that `-m` is
+  admixer's maximum number of runs, not ADMIXTURE's method option.
 * Default 8 threads instead of 1; the P matrix is gzip-compressed, the evalAdmix correlation of
   residuals is written by default, and the screen output is also saved to `data.K.log`.
 * The log ends with a first-order optimality (KKT) check of the solution.

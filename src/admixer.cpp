@@ -20,6 +20,7 @@
 #include "io.hpp"
 #include "log.hpp"
 #include "model.hpp"
+#include "multistart.hpp"
 
 static const char* VERSION = "0.1.0";
 
@@ -44,6 +45,11 @@ static void usage(int code) {
       "                      (corrected estimator of van Waaij et al. 2023; plot with evalAdmix's visFuns.R).\n"
       "                      It needs memory ~ 48 N^2 bytes, so it is skipped for N > 20000 individuals\n"
       "                      unless --evaladmix is given\n"
+      "  --conv X            convergence test with several starts (seeds seed, seed+1, ...): stop when X runs\n"
+      "                      agree with the best run (highest likelihood); writes the best run and NAME.K.conv\n"
+      "  -m X, --max_runs=X  with --conv: at most X runs (default 10)\n"
+      "  --conv_thres=X      with --conv: runs agree if the largest difference in any Q entry, after matching\n"
+      "                      ancestries, is below X (default 0.01)\n"
       "  -h, --help          this help\n",
       VERSION);
   std::exit(code);
@@ -62,7 +68,8 @@ int main(int argc, char** argv) {
   int threads = 8;
   std::string seed_s = "43", out, input;
   bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true;
-  int K = 0;
+  int K = 0, conv = 0, max_runs = 10;
+  double conv_thres = 0.01;
   std::vector<std::string> pos;
   for (int a = 1; a < argc; a++) {
     const std::string o = argv[a];
@@ -73,6 +80,10 @@ int main(int argc, char** argv) {
     else if (o == "--evaladmix") evaladmix = evaladmix_forced = true;
     else if (o == "--no-evaladmix") evaladmix = false;
     else if (o == "--no-gzip") gz = false;
+    else if (o.rfind("--conv_thres", 0) == 0) conv_thres = std::atof(opt_value(argc, argv, a, "--conv_thres").c_str());
+    else if (o.rfind("--conv", 0) == 0) conv = std::atoi(opt_value(argc, argv, a, "--conv").c_str());
+    else if (o.rfind("--max_runs", 0) == 0) max_runs = std::atoi(opt_value(argc, argv, a, "--max_runs").c_str());
+    else if (o.rfind("-m", 0) == 0) max_runs = std::atoi(opt_value(argc, argv, a, "-m").c_str());
     else if (o.rfind("--max-iter", 0) == 0) fs.max_iter = std::atoi(opt_value(argc, argv, a, "--max-iter").c_str());
     else if (o == "-P") projection = true;
     else if (o.rfind("-j", 0) == 0) threads = std::atoi(opt_value(argc, argv, a, "-j").c_str());
@@ -87,7 +98,7 @@ int main(int argc, char** argv) {
   if (pos.size() != 2) usage(1);
   input = pos[0];
   K = std::atoi(pos[1].c_str());
-  if (K < 1 || threads < 1) usage(1);
+  if (K < 1 || threads < 1 || conv < 0 || max_runs < 1) usage(1);
   fs.seed = seed_s == "time" ? (unsigned long)std::time(nullptr) : std::strtoul(seed_s.c_str(), nullptr, 10);
   if (out.empty()) out = basename_noext(input);
   omp_set_num_threads(threads);
@@ -147,40 +158,93 @@ int main(int argc, char** argv) {
     }
 
     Model m(D, K);
-    Vec x(m.size());
-    std::mt19937_64 rng(fs.seed);
+    Vec x0(m.size());  // fixed parts (projection P, supervised rows) shared by all runs
     if (projection) {
       std::string fn = strip_extension(input) + "." + std::to_string(K) + ".P.in";
       if (!std::ifstream(fn) && std::ifstream(fn + ".gz")) fn += ".gz";
-      read_matrix(fn, x.data(), D.M, K);
+      read_matrix(fn, x0.data(), D.M, K);
       m.pfix = true;
       say("Projection mode: P read from %s and held fixed\n", fn.c_str());
     }
     if (supervised) {
       for (int i = 0; i < D.N; i++)
         if (label[i] >= 0) {
-          double* q = x.data() + m.nP + (size_t)i * K;
+          double* q = x0.data() + m.nP + (size_t)i * K;
           for (int k = 0; k < K; k++) q[k] = k == label[i];
           m.qfix[i] = 1;
         }
     }
-    Fitter fit(m, fs);
-    fit.init_random(x, rng);
-    if (supervised && !projection) {  // start P at the allele frequencies of the labelled individuals
-      for (int j = 0; j < D.M; j++) {
-        const uint8_t* g = D.row(j);
-        std::vector<double> s(K, 0.0), n(K, 0.0);
-        for (int i = 0; i < D.N; i++)
-          if (label[i] >= 0 && g[i] != 3) s[label[i]] += g[i], n[label[i]] += 2;
-        for (int k = 0; k < K; k++)
-          if (n[k] > 0) x[(size_t)j * K + k] = std::min(std::max((s[k] + 0.5) / (n[k] + 1), PMIN), PMAX);
+    // One run per seed: seed, seed+1, ... (a single run without --conv).
+    const int nruns = conv > 0 ? max_runs : 1;
+    if (conv > 0)
+      say("Convergence test: up to %d runs (seeds %lu-%lu); converged when %d runs agree with the best run "
+          "(max |dQ| < %g)\n", nruns, fs.seed, fs.seed + nruns - 1, conv, conv_thres);
+    struct Run {
+      unsigned long seed;
+      double loglik, seconds;
+      int iters;
+      std::vector<float> Q;
+      QDistance d;
+      bool agrees = false;
+    };
+    std::vector<Run> runs;
+    Vec x, best_x;
+    int best = -1, agreeing = 0;
+    for (int r = 0; r < nruns; r++) {
+      FitSettings fr = fs;
+      fr.seed = fs.seed + r;
+      x = x0;
+      std::mt19937_64 rng(fr.seed);
+      Fitter fit(m, fr);
+      fit.verbose = r == 0;  // iteration details for the first run only
+      fit.init_random(x, rng);
+      if (supervised && !projection) {  // start P at the allele frequencies of the labelled individuals
+        for (int j = 0; j < D.M; j++) {
+          const uint8_t* g = D.row(j);
+          std::vector<double> s(K, 0.0), n(K, 0.0);
+          for (int i = 0; i < D.N; i++)
+            if (label[i] >= 0 && g[i] != 3) s[label[i]] += g[i], n[label[i]] += 2;
+          for (int k = 0; k < K; k++)
+            if (n[k] > 0) x[(size_t)j * K + k] = std::min(std::max((s[k] + 0.5) / (n[k] + 1), PMIN), PMAX);
+        }
       }
+      const FitResult res = fit.run(x);
+      Run run{fr.seed, res.loglik, res.seconds, res.iterations,
+              std::vector<float>(x.begin() + m.nP, x.end()), QDistance(), false};
+      runs.push_back(std::move(run));
+      if (best < 0 || res.loglik > runs[best].loglik) best = r, best_x = x;
+      if (conv == 0) break;
+      // agreement of every run with the current best run (the best can change, so recompute all)
+      agreeing = 0;
+      for (auto& u : runs) {
+        u.d = q_distance(u.Q.data(), runs[best].Q.data(), D.N, K);
+        u.agrees = u.d.max_abs < conv_thres;
+        agreeing += u.agrees;
+      }
+      say("Run %d (seed %lu): loglik %f, %d iterations, %.1f sec; max |dQ| to best run %.4f; %d of %d runs agree\n",
+          r + 1, fr.seed, res.loglik, res.iterations, res.seconds, runs.back().d.max_abs, agreeing, r + 1);
+      if (agreeing >= conv) break;
     }
-    const FitResult r = fit.run(x);
+    x = best_x;
     const auto kkt = m.kkt(x.data());
     say("Summary: \n");
-    say("Converged in %d iterations (%.3f sec)\n", r.iterations, omp_get_wtime() - t0);
-    say("Loglikelihood: %f\n", r.loglik);
+    if (conv > 0) {
+      say("%s: %d of %d runs agree with the best run (seed %lu, max |dQ| < %g)\n",
+          agreeing >= conv ? "Converged" : "Not converged", agreeing, (int)runs.size(), runs[best].seed, conv_thres);
+      const std::string fn = out + "." + std::to_string(K) + ".conv";
+      FILE* fp = std::fopen(fn.c_str(), "w");
+      if (!fp) throw std::runtime_error("cannot write " + fn);
+      std::fprintf(fp, "run\tseed\tloglik\tloglik_diff\tmax_abs_dQ\tmean_sum_abs_dQ\trmse_dQ\titerations\tseconds\tagrees\n");
+      for (size_t r = 0; r < runs.size(); r++) {
+        const Run& u = runs[r];
+        std::fprintf(fp, "%zu\t%lu\t%.6f\t%.6f\t%.6g\t%.6g\t%.6g\t%d\t%.2f\t%d\n", r + 1, u.seed, u.loglik,
+                     u.loglik - runs[best].loglik, u.d.max_abs, u.d.mean_sum, u.d.rmse, u.iters, u.seconds, (int)u.agrees);
+      }
+      std::fclose(fp);
+      say("Convergence table written to %s\n", fn.c_str());
+    }
+    say("Converged in %d iterations (%.3f sec)\n", runs[best].iters, omp_get_wtime() - t0);
+    say("Loglikelihood: %f\n", runs[best].loglik);
     say("Optimality check (max KKT violation): P %.2e per individual, Q %.2e per SNP\n", kkt.first, kkt.second);
 
     say("Writing output files.\n");

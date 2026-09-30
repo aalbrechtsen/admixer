@@ -35,6 +35,7 @@ struct FitResult {
 class Fitter {
  public:
   Fitter(Model& m, const FitSettings& s) : m_(m), s_(s) {}
+  bool verbose = true;  // print every iteration (false: silent; the caller prints a summary)
 
   // Random start: P uniform in [0.05, 0.95]; each row of Q is a vector of Exp(1) draws projected onto
   // the simplex (which gives sparse rows: most individuals start with one or two ancestries). This is the
@@ -57,7 +58,7 @@ class Fitter {
   FitResult run(Vec& x) {
     const double t0 = omp_get_wtime();
     Vec y(x.size());
-    say("Performing five EM steps to prime main algorithm\n");
+    if (verbose) say("Performing five EM steps to prime main algorithm\n");
     double prev = -INFINITY;
     for (int it = 1; it <= s_.prime; it++) {
       const double ll = m_.em(x.data(), y.data());
@@ -66,9 +67,9 @@ class Fitter {
       prev = ll;
     }
     double ll = m_.loglik(x.data());
-    say("Initial loglikelihood: %f\n", ll);
+    if (verbose) say("Initial loglikelihood: %f\n", ll);
     if (s_.minibatch > 1 && !m_.pfix) warmup(x, t0);
-    say("Starting main algorithm\n");
+    if (verbose) say("Starting main algorithm\n");
     FitResult r = qn(x, t0);
     r.seconds = omp_get_wtime() - t0;
     return r;
@@ -78,8 +79,8 @@ class Fitter {
   Model& m_;
   FitSettings s_;
 
-  static void log_line(int it, const char* what, double ll, double delta, double t0) {
-    say("%d (%s) \tElapsed: %.3f\tLoglikelihood: %.6f\t(delta): %g\n", it, what, omp_get_wtime() - t0, ll,
+  void log_line(int it, const char* what, double ll, double delta, double t0) const {
+    if (verbose) say("%d (%s) \tElapsed: %.3f\tLoglikelihood: %.6f\t(delta): %g\n", it, what, omp_get_wtime() - t0, ll,
                 delta);
   }
   static double dot(const Vec& a, const Vec& b) {
