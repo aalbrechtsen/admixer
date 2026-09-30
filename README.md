@@ -97,7 +97,26 @@ This leaves 37,567 SNPs. The data are not included in this repository.
 admixer --seed 1 -j10 -o blue_wildebeest_noLD_admixer blue_wildebeest_noLD.bed 7
 ```
 
-This run takes 4 seconds and ends at log-likelihood −2932963.07.
+This run takes 4 seconds and ends at log-likelihood −2932963.07. It writes these files:
+
+| file | size | content |
+|---|---|---|
+| `blue_wildebeest_noLD_admixer.7.Q` | 4.5 kB | admixture proportions, 73 rows × 7 columns (as ADMIXTURE) |
+| `blue_wildebeest_noLD_admixer.7.P.gz` | 0.9 MB | ancestral allele frequencies, 37,567 rows × 7 columns, gzipped (`--no-gzip` for plain text) |
+| `blue_wildebeest_noLD_admixer.7.corres.txt` | 50 kB | **evalAdmix correlation of residuals**, 73 × 73, `NA` on the diagonal |
+| `blue_wildebeest_noLD_admixer.7.log` | 5 kB | the screen output: command, settings, every iteration, final log-likelihood, optimality check |
+
+The evalAdmix correlations are computed by default, in 0.1 s here. You do not need to run evalAdmix
+separately; the file is read directly by evalAdmix's `plotCorRes` (see below). The end of the log:
+
+```
+Converged in 11 iterations (3.809 sec)
+Loglikelihood: -2932963.069302
+Optimality check (max KKT violation): P 7.78e-05 per individual, Q 2.34e-08 per SNP
+Writing output files.
+evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.11 sec)
+Log written to blue_wildebeest_noLD_admixer.7.log
+```
 
 ![Admixture proportions, seed 1](docs/blue_wildebeest_noLD_admixer.admix.png)
 
@@ -131,7 +150,10 @@ run  seed  loglik           loglik_diff    max_abs_dQ   ...  agrees
 ```
 
 Three of the nine runs reach the same solution, which is 26,000 log-likelihood units better than the seed-1
-run. The output files are those of the best run (seed 8).
+run. The output files are those of the best run (seed 8):
+- `blue_wildebeest_noLD_admixerMult.7.Q`, `.7.P.gz` and `.7.corres.txt` (evalAdmix computed for the best run);
+- `.7.log`, with one summary line per run;
+- `blue_wildebeest_noLD_admixerMult.7.conv`, the table above.
 
 ![Admixture proportions, best of several runs](docs/blue_wildebeest_noLD_admixerMult.admix.png)
 
