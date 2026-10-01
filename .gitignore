@@ -15,3 +15,5 @@ tools/prof_kernels
 bench/data/
 bench/work/
 bench/admixer_*
+.build/
+dist/

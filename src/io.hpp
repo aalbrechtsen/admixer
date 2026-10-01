@@ -14,6 +14,8 @@
 
 #include <zlib.h>
 
+#include "kernel.hpp"
+
 // Called genotypes (PLINK input). Besides the data, a data type provides the per-entry part of the
 // likelihood that the BLAS kernels of model.hpp need (see GLData in beagle.hpp for the other data type).
 // On entry every tile holds h = sum_k Q_ik P_jk; lo/hi are the bounds h is clamped to.
@@ -43,6 +45,7 @@ struct Genotypes {
   // MODE 0: log-likelihood only; 1: EM ratios (A = r0 in place of h, B = r1); 2: Newton (A = d, B = w).
   static constexpr int LANES = 8, PER_LOG = 16, BLK = LANES * PER_LOG;
   template <int MODE>
+  [[gnu::always_inline]]  // inlined into each CPU version of the tile kernels (kernel.hpp)
   static inline double row_pass(const uint8_t* __restrict g, double* __restrict A, double* __restrict B, int n,
                                 double lo, double hi) {
     double pr[BLK], gd[BLK], prod[LANES], ex[LANES];
@@ -92,7 +95,7 @@ struct Genotypes {
 
   // log-likelihood of the tile H (jn x in) of sites j0.., individuals i0.. (all: no effect for genotypes,
   // whose missing entries carry no likelihood)
-  double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool = false) const {
+  ADMIXER_KERNEL double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool = false) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++) {
       ll += row_pass<0>(row(j0 + jj) + i0, const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi);  // reads only
@@ -100,14 +103,14 @@ struct Genotypes {
     return ll;
   }
   // EM ratios: on exit R1 = g/h, R0 = (2-g)/(1-h) (0 for missing). R0 holds h on entry. Returns log L.
-  double tile_em(int j0, int jn, int i0, int in, double* R0, double* R1, double lo, double hi) const {
+  ADMIXER_KERNEL double tile_em(int j0, int jn, int i0, int in, double* R0, double* R1, double lo, double hi) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)
       ll += row_pass<1>(row(j0 + jj) + i0, R0 + (size_t)jj * in, R1 + (size_t)jj * in, in, lo, hi);
     return ll;
   }
   // Newton quantities: on exit T = d = dlogL/dh, W = w = -d2logL/dh2 (0 for missing). T holds h on entry.
-  double tile_wd(int j0, int jn, int i0, int in, double* T, double* W, double lo, double hi) const {
+  ADMIXER_KERNEL double tile_wd(int j0, int jn, int i0, int in, double* T, double* W, double lo, double hi) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)
       ll += row_pass<2>(row(j0 + jj) + i0, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);

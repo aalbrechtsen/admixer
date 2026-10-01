@@ -95,6 +95,19 @@ H = P Qᵀ (BLAS), the per-entry likelihood terms, and the Hessians and gradient
 Measurements, profiles and what was tried: [`bench/perf_results.md`](bench/perf_results.md). Kernel profiler:
 `make tools/prof_kernels; tools/prof_kernels data.bed K threads` (also for `.beagle.gz`).
 
+## Prebuilt binary
+
+`./build-static.sh` (needs podman or docker) builds `dist/admixer-linux-x86_64.tar.gz` in the
+manylinux_2_28 container (glibc 2.28, GCC 14). OpenBLAS (with `DYNAMIC_ARCH`, so its kernels are chosen for
+the CPU at run time) and zlib are built from source once into `.build/` and linked statically, as are
+libstdc++, libgcc and libgomp; the script fails if the binary needs any shared library besides glibc.
+The code is compiled for x86-64-v2, and the per-entry tile kernels (`tile_ll`, `tile_em`, `tile_wd` in
+`io.hpp` and `beagle.hpp`) also for AVX-512 (`ADMIXER_KERNEL` in `kernel.hpp`, GCC `target_clones`); the
+version is chosen when the program starts. Without the AVX-512 kernels the binary was about 2× slower on
+an AVX-512 CPU; with them it is as fast as a `-march=native` build (20,000 SNPs, 2,000 individuals, 16
+threads, Xeon Gold 6152: K = 5 2.7 s vs 2.7 s, K = 10 196 s vs 203 s, same log-likelihoods). To release:
+run the script, run `tests/run_tests.sh --bin admixer`, and attach the tarball to a GitHub release.
+
 ## Testing
 
 ```

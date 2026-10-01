@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 
+#include "kernel.hpp"
+
 struct GLData {
   static constexpr const char* kind = "genotype likelihoods";
   int M = 0, N = 0;
@@ -55,6 +57,7 @@ struct GLData {
   // 2: Newton (A = d, B = w).
   static constexpr int LANES = 8, PER_LOG = 8, BLK = LANES * PER_LOG;
   template <int MODE, bool EXACT>
+  [[gnu::always_inline]]  // inlined into each CPU version of the tile kernels (kernel.hpp)
   static inline double row_pass(const float* __restrict l, const uint8_t* __restrict kp, double* __restrict A,
                                 double* __restrict B, int n, double lo, double hi, bool all) {
     double pr[BLK], q0[BLK], q1[BLK], q2[BLK], kd[BLK], prod[LANES], ex[LANES];
@@ -118,21 +121,21 @@ struct GLData {
   }
 
   // all = true: every entry, the missing ones included (the exact log-likelihood, as NGSadmix)
-  double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool all = false) const {
+  ADMIXER_KERNEL double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool all = false) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)  // MODE 0 only reads the tile
       ll += row_pass<0, true>(row(j0 + jj) + 3 * (size_t)i0, krow(j0 + jj) + i0,
                               const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi, all);
     return ll;
   }
-  double tile_em(int j0, int jn, int i0, int in, double* R0, double* R1, double lo, double hi) const {
+  ADMIXER_KERNEL double tile_em(int j0, int jn, int i0, int in, double* R0, double* R1, double lo, double hi) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)
       ll += row_pass<1, true>(row(j0 + jj) + 3 * (size_t)i0, krow(j0 + jj) + i0, R0 + (size_t)jj * in,
                               R1 + (size_t)jj * in, in, lo, hi, false);
     return ll;
   }
-  double tile_wd(int j0, int jn, int i0, int in, double* T, double* W, double lo, double hi) const {
+  ADMIXER_KERNEL double tile_wd(int j0, int jn, int i0, int in, double* T, double* W, double lo, double hi) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++) {
       const float* l = row(j0 + jj) + 3 * (size_t)i0;

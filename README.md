@@ -20,19 +20,52 @@ Details beyond everyday use (algorithms, performance, testing, differences from 
 
 ## Install
 
+### Prebuilt binary (Linux x86_64)
+
+Nothing else needs to be installed: OpenBLAS, zlib and the C++/OpenMP runtimes are built in. It runs on any
+x86_64 Linux with glibc 2.28 or newer (RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 10+), and uses AVX-512
+when the CPU has it.
+
+```
+wget https://github.com/aalbrechtsen/admixer/releases/latest/download/admixer-linux-x86_64.tar.gz
+tar xzf admixer-linux-x86_64.tar.gz
+./admixer
+```
+
+### From source
+
 Requires a C++17 compiler with OpenMP (e.g. g++), OpenBLAS and zlib. On Ubuntu/Debian:
 
 ```
 sudo apt-get install build-essential libopenblas-dev zlib1g-dev
-git clone git@github.com:aalbrechtsen/admixer.git
+git clone https://github.com/aalbrechtsen/admixer.git
 cd admixer
 make
 make test        # optional: the test suite, about 15 seconds (see DETAILS.md)
 ```
 
+<details>
+<summary>On a cluster with environment modules (<code>module load</code>)</summary>
+
+Load a compiler and OpenBLAS before running `make` (`module avail gcc openblas` lists what is installed):
+
+```
+git clone https://github.com/aalbrechtsen/admixer.git
+cd admixer
+module load gcc openblas
+make
+```
+
+If `make` stops with `cblas.h: No such file or directory`, OpenBLAS is not loaded; with
+`zlib.h: No such file or directory`, also run `module load zlib`. The binary links OpenBLAS from the module,
+so run `module load openblas` before using it (otherwise it fails with `error while loading shared
+libraries: libopenblas.so.0`), or use the prebuilt binary above, which needs no modules.
+
+</details>
+
 This builds the `admixer` binary in the current directory. `sudo make install` copies it to
 `/usr/local/bin` (or `make install PREFIX=$HOME/.local`). To link a different BLAS, use for example
-`make BLAS=-lblis`.
+`make BLAS=-lblis`. The prebuilt binary is made with `./build-static.sh` (see DETAILS.md).
 
 ## Usage
 
