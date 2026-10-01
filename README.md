@@ -133,6 +133,9 @@ L_ij = GL0 (1 − h)² + GL1 · 2h(1 − h) + GL2 · h² (Skotte, Korneliussen &
   In simulations at 1–8× and mixed 0.5–6× depth, its accuracy against the correlations from the true
   genotypes matched `evalAdmix -beagle` (within 7 %, unbiased, no depth artefacts), at about 5 % of its cost
   (0.2–0.3 s vs 10–20 s for 200 individuals). On the NGSadmix tutorial data the two agree with r = 0.999.
+  At very low depth it is slightly worse than `evalAdmix -beagle`: when half of the individuals are at 0.1×,
+  the correlations between the higher-depth individuals are shifted down by about 0.004–0.009. Pairs of
+  two 0.1× individuals share too few sites to be informative with either tool.
 
 **Common to both.**
 * Every pass over the data works on tiles of SNPs × individuals: a matrix product gives the tile of
