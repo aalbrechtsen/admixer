@@ -184,7 +184,7 @@ q <- read.table("input.3.Q")
 ord <- orderInds(pop = pop, q = q)
 plotAdmix(q, pop = pop, ord = ord, cex.lab = 1.2, col = c("#1b9e77", "#d95f02", "#7570b3"))
 r <- as.matrix(read.table("input.3.corres.txt"))
-plotCorRes(r, pop = pop, ord = ord, max_z = 0.25, title = "")
+plotCorRes(r, pop = pop, ord = ord, max_z = 0.1, title = "")
 ```
 
 Time per run against ADMIXTURE: `bench/plot_wildebeest_time.R`.
