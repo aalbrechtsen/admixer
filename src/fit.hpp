@@ -139,15 +139,26 @@ class Fitter {
   //   x_new = F(x) + V (U'U - U'V)^{-1} U'u,  u = F(x) - x,
   // with U, V the last q secant pairs. The extrapolated point is projected back onto the constraints
   // and accepted only if it beats F(x); otherwise F(F(x)) is used.
+  // F = Q step after P step, and the P step returns log L of its input. So log L of the new x is not a
+  // separate pass: the P step of the next F(x) is taken at once (for an extrapolated point, before
+  // deciding whether to accept it; a rejected point wastes that P step instead of a log L pass).
   FitResult qn(Vec& x, double t0) {
-    const size_t n = x.size();
+    const size_t n = x.size(), nP = m_.nP;
     const int q = s_.qn_secants;
     std::vector<Vec> U, V;
-    Vec x1(n), x2(n), xq(n);
-    double prev = -INFINITY, ll = -INFINITY;
+    Vec x1(n), x2(n), xq(n), y(n);
+    // P step of F at a: P part of b; returns log L(a)
+    auto half_P = [&](const Vec& a, Vec& b) {
+      if (m_.pfix) {
+        std::copy(a.begin(), a.begin() + nP, b.begin());
+        return m_.loglik(a.data()) + off_;
+      }
+      return m_.sqp_P(a.data() + nP, a.data(), b.data()) + off_;
+    };
+    double prev = -INFINITY, ll = half_P(x, x1);  // ll = log L(x); x1 holds the P part of F(x)
     int it;
     for (it = 1; it <= s_.max_iter; it++) {
-      m_.block_relax(x.data(), x1.data());
+      m_.sqp_Q(x1.data(), x.data() + nP, x1.data() + nP);  // x1 = F(x)
       const double ll1 = m_.block_relax(x1.data(), x2.data()) + off_;
       Vec u(n), v(n);
       for (size_t t = 0; t < n; t++) u[t] = x1[t] - x[t], v[t] = x2[t] - x1[t];
@@ -161,7 +172,6 @@ class Fitter {
         for (int b = 0; b < h; b++) A[a * h + b] = dot(U[a], U[b]) - dot(U[a], V[b]);
       }
       bool accepted = false;
-      double llq = -INFINITY;
       if (solve_linear(h, A.data(), c.data())) {
         xq = x1;
 #pragma omp parallel for schedule(static)
@@ -169,15 +179,16 @@ class Fitter {
           for (int a = 0; a < h; a++) xq[t] += V[a][t] * c[a];
         m_.project(xq.data());
         m_.restore_fixed(xq.data(), x1.data());
-        llq = m_.loglik(xq.data()) + off_;
-        accepted = llq > ll1;
+        const double llq = half_P(xq, y);
+        if ((accepted = llq > ll1)) {
+          x.swap(xq);
+          x1.swap(y);
+          ll = llq;
+        }
       }
-      if (accepted) {
-        x.swap(xq);
-        ll = llq;
-      } else {
+      if (!accepted) {
         x.swap(x2);
-        ll = m_.loglik(x.data()) + off_;
+        ll = half_P(x, x1);
       }
       log_line(it, "QN/Block", ll, ll - prev, t0);
       if (std::fabs(ll - prev) < s_.tol) break;

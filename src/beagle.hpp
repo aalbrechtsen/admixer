@@ -44,54 +44,92 @@ struct GLData {
     const double a = 1 - h;
     return l[0] * a * a + 2.0 * l[1] * h * a + l[2] * h * h;
   }
-  // Sums logs with one log() per 8 terms (a term can be ~bound^2 = 1e-18; 8 of them do not underflow).
-  struct LogAcc {
-    double sum = 0, prod = 1;
-    int n = 0;
-    inline void add(double t) {
-      prod *= t;
-      if (++n == 8) sum += std::log(prod), prod = 1, n = 0;
+  // Per-entry kernels, branch-free so that they vectorise (as Genotypes::row_pass): entries outside the model
+  // get weight 0 and probability 1, and the three interleaved GLs are widened to double first.
+  //   L = GL0 a^2 + 2 GL1 h a + GL2 h^2 (a = 1 - h),  r1 = 2 (GL1 a + GL2 h) / L,  r0 = 2 (GL0 a + GL1 h) / L,
+  //   d = r1 - r0,  w = max(0, d^2 - 2 (GL0 - 2 GL1 + GL2) / L) (exact) or r1/h + r0/a (EM-type),
+  // with one division per entry (EM-type: D = 1 / (L h a), 2/L = 2 h a D, 1/(h a) = L D).
+  // Logs: LANES independent products, split exactly into mantissa and exponent after every PER_LOG factors (a
+  // term can be ~bound^2 = 1e-18; 8 of them do not underflow), one log per lane per row.
+  // MODE 0: log L only (all: missing entries included); 1: EM ratios (A = r0 in place of h, B = r1);
+  // 2: Newton (A = d, B = w).
+  static constexpr int LANES = 8, PER_LOG = 8, BLK = LANES * PER_LOG;
+  template <int MODE, bool EXACT>
+  static inline double row_pass(const float* __restrict l, const uint8_t* __restrict kp, double* __restrict A,
+                                double* __restrict B, int n, double lo, double hi, bool all) {
+    double pr[BLK], q0[BLK], q1[BLK], q2[BLK], kd[BLK], prod[LANES], ex[LANES];
+    for (int t = 0; t < LANES; t++) prod[t] = 1, ex[t] = 0;
+    for (int c0 = 0; c0 < n; c0 += BLK) {
+      const int cn = std::min(BLK, n - c0);
+      const float* lc = l + 3 * (size_t)c0;
+      double* Ac = A + c0;
+      double* Bc = MODE >= 1 ? B + c0 : nullptr;
+      for (int u = 0; u < cn; u++) {
+        q0[u] = lc[3 * u], q1[u] = lc[3 * u + 1], q2[u] = lc[3 * u + 2];
+        kd[u] = (kp[c0 + u] || (MODE == 0 && all)) ? 1.0 : 0.0;
+      }
+#pragma omp simd
+      for (int u = 0; u < cn; u++) {
+        double h = Ac[u];
+        h = h < lo ? lo : h;
+        h = h > hi ? hi : h;
+        const double a = 1 - h, g0 = q0[u], g1 = q1[u], g2 = q2[u];
+        const double L = g0 * a * a + 2.0 * g1 * h * a + g2 * h * h;
+        const bool obs = kd[u] > 0.5;
+        pr[u] = obs ? L : 1.0;
+        if (MODE >= 1) {
+          double iL, iha = 0;
+          if (EXACT || MODE == 1) {
+            iL = 2.0 / L;
+          } else {
+            const double D = 1 / (L * h * a);
+            iL = 2.0 * h * a * D, iha = L * D;
+          }
+          const double r1 = (g1 * a + g2 * h) * iL, r0 = (g0 * a + g1 * h) * iL;
+          if (MODE == 1) {
+            Ac[u] = obs ? r0 : 0.0, Bc[u] = obs ? r1 : 0.0;
+          } else {
+            const double d = r1 - r0;
+            double w;
+            if (EXACT) {
+              w = d * d - (g0 - 2.0 * g1 + g2) * iL;
+              w = w > 0 ? w : 0.0;
+            } else {
+              w = (r1 * a + r0 * h) * iha;
+            }
+            Ac[u] = obs ? d : 0.0, Bc[u] = obs ? w : 0.0;
+          }
+        }
+      }
+      for (int u = cn; u < BLK; u++) pr[u] = 1;
+      for (int r = 0; r < PER_LOG; r++)
+        for (int t = 0; t < LANES; t++) prod[t] *= pr[r * LANES + t];
+      for (int t = 0; t < LANES; t++) {
+        uint64_t bits;
+        std::memcpy(&bits, &prod[t], 8);
+        ex[t] += (double)((int64_t)(bits >> 52) - 1023);
+        bits = (bits & 0x000FFFFFFFFFFFFFull) | 0x3FF0000000000000ull;
+        std::memcpy(&prod[t], &bits, 8);
+      }
     }
-    inline double get() const { return sum + std::log(prod); }
-  };
-  static inline double clamp(double h, double lo, double hi) { return std::min(std::max(h, lo), hi); }
+    double ll = 0;
+    for (int t = 0; t < LANES; t++) ll += std::log(prod[t]) + ex[t] * 0.69314718055994530942;
+    return ll;
+  }
 
   // all = true: every entry, the missing ones included (the exact log-likelihood, as NGSadmix)
   double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool all = false) const {
     double ll = 0;
-    for (int jj = 0; jj < jn; jj++) {
-      const float* l = row(j0 + jj) + 3 * (size_t)i0;
-      const uint8_t* kp = krow(j0 + jj) + i0;
-      const double* t = H + (size_t)jj * in;
-      LogAcc acc;
-      for (int ii = 0; ii < in; ii++)
-        if (kp[ii] || all) acc.add(lik(l + 3 * ii, clamp(t[ii], lo, hi)));
-      ll += acc.get();
-    }
+    for (int jj = 0; jj < jn; jj++)  // MODE 0 only reads the tile
+      ll += row_pass<0, true>(row(j0 + jj) + 3 * (size_t)i0, krow(j0 + jj) + i0,
+                              const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi, all);
     return ll;
   }
   double tile_em(int j0, int jn, int i0, int in, double* R0, double* R1, double lo, double hi) const {
     double ll = 0;
-    for (int jj = 0; jj < jn; jj++) {
-      const float* l = row(j0 + jj) + 3 * (size_t)i0;
-      const uint8_t* kp = krow(j0 + jj) + i0;
-      double* r0 = R0 + (size_t)jj * in;
-      double* r1 = R1 + (size_t)jj * in;
-      LogAcc acc;
-      for (int ii = 0; ii < in; ii++) {
-        if (!kp[ii]) {
-          r0[ii] = r1[ii] = 0;
-          continue;
-        }
-        const float* g = l + 3 * ii;
-        const double h = clamp(r0[ii], lo, hi), a = 1 - h;
-        const double L = lik(g, h), iL = 2.0 / L;
-        acc.add(L);
-        r1[ii] = (g[1] * a + g[2] * h) * iL;
-        r0[ii] = (g[0] * a + g[1] * h) * iL;
-      }
-      ll += acc.get();
-    }
+    for (int jj = 0; jj < jn; jj++)
+      ll += row_pass<1, true>(row(j0 + jj) + 3 * (size_t)i0, krow(j0 + jj) + i0, R0 + (size_t)jj * in,
+                              R1 + (size_t)jj * in, in, lo, hi, false);
     return ll;
   }
   double tile_wd(int j0, int jn, int i0, int in, double* T, double* W, double lo, double hi) const {
@@ -101,21 +139,8 @@ struct GLData {
       const uint8_t* kp = krow(j0 + jj) + i0;
       double* t = T + (size_t)jj * in;
       double* w = W + (size_t)jj * in;
-      LogAcc acc;
-      for (int ii = 0; ii < in; ii++) {
-        if (!kp[ii]) {
-          t[ii] = w[ii] = 0;
-          continue;
-        }
-        const float* g = l + 3 * ii;
-        const double h = clamp(t[ii], lo, hi), a = 1 - h;
-        const double L = lik(g, h), iL = 2.0 / L;
-        acc.add(L);
-        const double r1 = (g[1] * a + g[2] * h) * iL, r0 = (g[0] * a + g[1] * h) * iL, d = r1 - r0;
-        t[ii] = d;
-        w[ii] = exact_hess ? std::max(0.0, d * d - (g[0] - 2.0 * g[1] + g[2]) * iL) : r1 / h + r0 / a;
-      }
-      ll += acc.get();
+      ll += exact_hess ? row_pass<2, true>(l, kp, t, w, in, lo, hi, false)
+                       : row_pass<2, false>(l, kp, t, w, in, lo, hi, false);
     }
     return ll;
   }

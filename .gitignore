@@ -11,3 +11,7 @@ tests/work/
 tests/unit
 tests/qdist
 tools/simgl
+tools/prof_kernels
+bench/data/
+bench/work/
+bench/admixer_*

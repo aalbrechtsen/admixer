@@ -1,5 +1,5 @@
 CXX      ?= g++
-CXXFLAGS ?= -O3 -march=native -std=c++17 -Wall -Wextra
+CXXFLAGS ?= -O3 -march=native -mprefer-vector-width=512 -std=c++17 -Wall -Wextra
 BLAS     ?= -lopenblas
 LIBS     := -lz
 PREFIX   ?= /usr/local
@@ -13,6 +13,9 @@ tests/unit: tests/unit.cpp src/io.hpp src/beagle.hpp src/linalg.hpp src/model.hp
 tests/qdist: tests/qdist.cpp src/multistart.hpp
 	$(CXX) $(CXXFLAGS) -o $@ tests/qdist.cpp
 
+tools/prof_kernels: tools/prof_kernels.cpp src/io.hpp src/beagle.hpp src/linalg.hpp src/model.hpp
+	$(CXX) $(CXXFLAGS) -fopenmp -o $@ tools/prof_kernels.cpp $(BLAS) $(LIBS)
+
 tools/simgl: tools/simgl.cpp src/io.hpp
 	$(CXX) $(CXXFLAGS) -fopenmp -o $@ tools/simgl.cpp $(LIBS)
 
@@ -23,6 +26,6 @@ install: admixer
 	install -m 755 admixer $(PREFIX)/bin/admixer
 
 clean:
-	rm -f admixer tests/unit tests/qdist tools/simgl
+	rm -f admixer tests/unit tests/qdist tools/simgl tools/prof_kernels
 
 .PHONY: install clean test

@@ -291,10 +291,14 @@ struct Model {
   void sqp_Q(const double* P, const double* Q0, double* Q1, int ja = 0, int jb = -1) const {
     if (jb < 0) jb = D.M;
     const int N = D.N, kp = KP(), nt = omp_get_max_threads();
-    const int bi = std::max(32, std::min(512, N / (4 * nt) / 8 * 8));  // individuals per task
-    const int bj = 512;                                                // SNPs per tile
+    // Long individual blocks: the elementwise pass runs along rows of length bi, and Y is packed once per
+    // block of individuals (bi = 1024, bj = 64 was fastest at K = 5-20, 2-2.6x faster than 56 x 512).
+    const int bi = std::min(1024, (N + 7) / 8 * 8);  // individuals per task
+    const int bj = 64;                               // SNPs per tile
     const int nib = (N + bi - 1) / bi;
-    const int nsp = std::max(1, std::min((jb - ja) / bj, (2 * nt + nib - 1) / nib));  // SNP splits
+    // SNP splits, for enough tasks; their partial Hessians are capped at ~256 MB
+    const long cap = std::max(1L, (256L << 20) / (8L * N * (kp + K)));
+    const int nsp = (int)std::max(1L, std::min({(long)(jb - ja) / bj, (long)(2 * nt + nib - 1) / nib, cap}));
     std::vector<double> HpAll((size_t)nsp * N * kp, 0.0), GAll((size_t)nsp * N * K, 0.0);
 #pragma omp parallel
     {

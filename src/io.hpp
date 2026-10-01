@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -30,82 +31,86 @@ struct Genotypes {
   }
   double ll_offset() const { return 0; }  // constant added to the log-likelihood
 
-  // Binomial likelihood of one genotype, without the constant C(2, g).
-  static inline double geno_prob(int g, double h) {
-    return g == 0 ? (1 - h) * (1 - h) : g == 2 ? h * h : h * (1 - h);
-  }
-  // Sums logs of genotype probabilities with one log() per 16 terms. Every term is at least
-  // PMIN^2, so a product of 16 cannot underflow for bounds down to ~1e-9.
-  struct LogAcc {
-    double sum = 0, prod = 1;
-    int n = 0;
-    inline void add(double t) {
-      prod *= t;
-      if (++n == 16) sum += std::log(prod), prod = 1, n = 0;
+  // Per-entry kernels, branch-free so that they vectorise (missing entries get weight 0 and probability 1).
+  // With a = 1 - h and one division inv = 1 / (h a):  1/h = a inv,  1/(1-h) = h inv.
+  //   prob = h^g a^(2-g),  r1 = g/h,  r0 = (2-g)/(1-h),  d = r1 - r0,  w = r1/h + r0/(1-h).
+  // The selects on g are written so that they compile to vector blends: branches on random genotypes are
+  // mispredicted about every other entry (that cost ~10 ns per entry before).
+  // A row is processed in chunks of BLK entries. The probabilities are multiplied into LANES independent
+  // products; after every 16 factors each product is split exactly into mantissa and binary exponent, so
+  // there is one log per lane per row (every probability is >= lo^2, so 16 factors cannot underflow for
+  // bounds >= ~1e-19).
+  // MODE 0: log-likelihood only; 1: EM ratios (A = r0 in place of h, B = r1); 2: Newton (A = d, B = w).
+  static constexpr int LANES = 8, PER_LOG = 16, BLK = LANES * PER_LOG;
+  template <int MODE>
+  static inline double row_pass(const uint8_t* __restrict g, double* __restrict A, double* __restrict B, int n,
+                                double lo, double hi) {
+    double pr[BLK], gd[BLK], prod[LANES], ex[LANES];
+    for (int l = 0; l < LANES; l++) prod[l] = 1, ex[l] = 0;
+    for (int c0 = 0; c0 < n; c0 += BLK) {
+      const int cn = std::min(BLK, n - c0);
+      const uint8_t* gc = g + c0;
+      double* Ac = A + c0;
+      double* Bc = MODE >= 1 ? B + c0 : nullptr;
+      for (int u = 0; u < cn; u++) gd[u] = gc[u];  // widened first: the main loop then has one element type
+#pragma omp simd
+      for (int u = 0; u < cn; u++) {
+        double h = Ac[u];
+        h = h < lo ? lo : h;
+        h = h > hi ? hi : h;
+        const double a = 1 - h, inv = 1 / (h * a), ih = a * inv, ia = h * inv;
+        const double g = gd[u];
+        const bool obs = g < 2.5;
+        const double gg = obs ? g : 0.0, cc = obs ? 2.0 - g : 0.0;
+        const double x1 = g > 0.5 ? h : a, x2 = g > 1.5 ? h : a;
+        pr[u] = obs ? x1 * x2 : 1.0;
+        if (MODE >= 1) {
+          const double r1 = gg * ih, r0 = cc * ia;
+          if (MODE == 1) {
+            Ac[u] = r0, Bc[u] = r1;
+          } else {
+            Ac[u] = r1 - r0, Bc[u] = r1 * ih + r0 * ia;
+          }
+        }
+      }
+      for (int u = cn; u < BLK; u++) pr[u] = 1;
+      for (int r = 0; r < PER_LOG; r++)
+        for (int l = 0; l < LANES; l++) prod[l] *= pr[r * LANES + l];
+      // exact renormalisation: prod = m 2^e with m in [1, 2); the exponent goes to ex
+      for (int l = 0; l < LANES; l++) {
+        uint64_t b;
+        std::memcpy(&b, &prod[l], 8);
+        ex[l] += (double)((int64_t)(b >> 52) - 1023);
+        b = (b & 0x000FFFFFFFFFFFFFull) | 0x3FF0000000000000ull;
+        std::memcpy(&prod[l], &b, 8);
+      }
     }
-    inline double get() const { return sum + std::log(prod); }
-  };
-  static inline double clamp(double h, double lo, double hi) { return std::min(std::max(h, lo), hi); }
+    double ll = 0;
+    for (int l = 0; l < LANES; l++) ll += std::log(prod[l]) + ex[l] * 0.69314718055994530942;
+    return ll;
+  }
 
   // log-likelihood of the tile H (jn x in) of sites j0.., individuals i0.. (all: no effect for genotypes,
   // whose missing entries carry no likelihood)
   double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool = false) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++) {
-      const uint8_t* g = row(j0 + jj) + i0;
-      const double* t = H + (size_t)jj * in;
-      LogAcc acc;
-      for (int ii = 0; ii < in; ii++)
-        if (g[ii] != 3) acc.add(geno_prob(g[ii], clamp(t[ii], lo, hi)));
-      ll += acc.get();
+      ll += row_pass<0>(row(j0 + jj) + i0, const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi);  // reads only
     }
     return ll;
   }
   // EM ratios: on exit R1 = g/h, R0 = (2-g)/(1-h) (0 for missing). R0 holds h on entry. Returns log L.
   double tile_em(int j0, int jn, int i0, int in, double* R0, double* R1, double lo, double hi) const {
     double ll = 0;
-    for (int jj = 0; jj < jn; jj++) {
-      const uint8_t* g = row(j0 + jj) + i0;
-      double* r0 = R0 + (size_t)jj * in;
-      double* r1 = R1 + (size_t)jj * in;
-      LogAcc acc;
-      for (int ii = 0; ii < in; ii++) {
-        const int gi = g[ii];
-        if (gi == 3) {
-          r0[ii] = r1[ii] = 0;
-          continue;
-        }
-        const double h = clamp(r0[ii], lo, hi);
-        acc.add(geno_prob(gi, h));
-        r1[ii] = gi / h;
-        r0[ii] = (2 - gi) / (1 - h);
-      }
-      ll += acc.get();
-    }
+    for (int jj = 0; jj < jn; jj++)
+      ll += row_pass<1>(row(j0 + jj) + i0, R0 + (size_t)jj * in, R1 + (size_t)jj * in, in, lo, hi);
     return ll;
   }
   // Newton quantities: on exit T = d = dlogL/dh, W = w = -d2logL/dh2 (0 for missing). T holds h on entry.
   double tile_wd(int j0, int jn, int i0, int in, double* T, double* W, double lo, double hi) const {
     double ll = 0;
-    for (int jj = 0; jj < jn; jj++) {
-      const uint8_t* g = row(j0 + jj) + i0;
-      double* t = T + (size_t)jj * in;
-      double* w = W + (size_t)jj * in;
-      LogAcc acc;
-      for (int ii = 0; ii < in; ii++) {
-        const int gi = g[ii];
-        if (gi == 3) {
-          t[ii] = w[ii] = 0;
-          continue;
-        }
-        const double h = clamp(t[ii], lo, hi);
-        acc.add(geno_prob(gi, h));
-        const double r1 = gi / h, r0 = (2 - gi) / (1 - h);
-        t[ii] = r1 - r0;
-        w[ii] = r1 / h + r0 / (1 - h);
-      }
-      ll += acc.get();
-    }
+    for (int jj = 0; jj < jn; jj++)
+      ll += row_pass<2>(row(j0 + jj) + i0, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);
     return ll;
   }
   // Reorders the sites: row j becomes row perm[j] of the input.
