@@ -292,13 +292,17 @@ struct Model {
     if (jb < 0) jb = D.M;
     const int N = D.N, kp = KP(), nt = omp_get_max_threads();
     // Long individual blocks: the elementwise pass runs along rows of length bi, and Y is packed once per
-    // block of individuals (bi = 1024, bj = 64 was fastest at K = 5-20, 2-2.6x faster than 56 x 512).
-    const int bi = std::min(1024, (N + 7) / 8 * 8);  // individuals per task
-    const int bj = 64;                               // SNPs per tile
+    // block of individuals (bi = 1024, bj = 64 was fastest at K = 5-20 with 8 threads, 2-2.6x faster than
+    // 56 x 512). The tasks (2 per thread) come from blocks of individuals x SNP splits. Each split holds a
+    // copy of the Q Hessians (N x KP), which is allocated, zeroed and summed in every call, so there are at
+    // most MAX_SPLITS of them: with many threads the blocks of individuals get shorter instead (64 threads,
+    // N = 2000: 64 splits of 1024-blocks were 2-4x slower at K = 10-20 than the old code).
+    constexpr int MAX_SPLITS = 8;
+    const int want_nib = (2 * nt + MAX_SPLITS - 1) / MAX_SPLITS;
+    const int bi = std::max(64, std::min(1024, (N / want_nib + 7) / 8 * 8));  // individuals per task
+    const int bj = 64;                                                         // SNPs per tile
     const int nib = (N + bi - 1) / bi;
-    // SNP splits, for enough tasks; their partial Hessians are capped at ~256 MB
-    const long cap = std::max(1L, (256L << 20) / (8L * N * (kp + K)));
-    const int nsp = (int)std::max(1L, std::min({(long)(jb - ja) / bj, (long)(2 * nt + nib - 1) / nib, cap}));
+    const int nsp = std::max(1, std::min({(jb - ja) / bj, (2 * nt + nib - 1) / nib, MAX_SPLITS}));  // SNP splits
     std::vector<double> HpAll((size_t)nsp * N * kp, 0.0), GAll((size_t)nsp * N * K, 0.0);
 #pragma omp parallel
     {
