@@ -1,0 +1,39 @@
+server	version	test	data	K	threads	seed	rep	wall_s	fit_s	loglik	iterations	note
+e5-2699v4	0.2.1 (30f49d6)	single	blue_wildebeest_noLD	7	10	1	1	1.99	1.602	-2932963.069301	17	
+e5-2699v4	0.2.2	single	blue_wildebeest_noLD	7	10	1	1	1.55	1.411	-2932963.069302	11	
+e5-2699v4	0.2.1 (30f49d6)	single	blue_wildebeest_noLD	7	10	1	2	1.98	1.591	-2932963.069301	17	
+e5-2699v4	0.2.2	single	blue_wildebeest_noLD	7	10	1	2	1.51	1.369	-2932963.069302	11	
+e5-2699v4	0.2.1 (30f49d6)	single	blue_wildebeest_noLD	7	10	1	3	1.98	1.587	-2932963.069301	17	
+e5-2699v4	0.2.2	single	blue_wildebeest_noLD	7	10	1	3	1.50	1.367	-2932963.069302	11	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	1	1	2.22	1.919	-2932963.069301	17	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	1	1	1.71	1.655	-2932963.069302	11	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	2	1	2.06	1.758	-2906767.495807	11	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	2	1	1.61	1.551	-2906767.495807	7	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	3	1	2.53	2.234	-2916647.819496	19	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	3	1	1.93	1.878	-2916647.819510	11	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	4	1	2.50	2.209	-2932840.179601	22	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	4	1	1.91	1.856	-2932840.179639	14	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	5	1	1.85	1.551	-2906767.495807	10	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	5	1	1.47	1.412	-2906767.495810	7	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	6	1	2.14	1.843	-2906767.495807	15	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	6	1	1.56	1.500	-2906767.495809	7	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	7	1	2.00	1.728	-2917307.136325	10	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	7	1	1.58	1.529	-2917307.136329	6	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	8	1	2.99	2.686	-2932568.793886	29	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	8	1	2.37	2.310	-2932568.793893	20	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	9	1	2.02	1.722	-2906767.495807	11	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	9	1	1.65	1.594	-2906767.495807	8	
+e5-2699v4	0.2.1 (30f49d6)	ten	blue_wildebeest_noLD	7	8	10	1	2.24	1.944	-2906767.495807	10	
+e5-2699v4	0.2.2	ten	blue_wildebeest_noLD	7	8	10	1	1.87	1.809	-2906767.495808	7	
+e5-2699v4	0.2.1 (30f49d6)	conv3	blue_wildebeest_noLD	7	10	0	1	13.92		-2906767.495807	9	
+e5-2699v4	0.2.2	conv3	blue_wildebeest_noLD	7	10	0	1	11.17		-2906767.495807	9	
+e5-2699v4	0.2.1 (30f49d6)	conv3	blue_wildebeest_noLD	7	10	0	2	13.86		-2906767.495807	9	
+e5-2699v4	0.2.2	conv3	blue_wildebeest_noLD	7	10	0	2	11.10		-2906767.495807	9	
+e5-2699v4	0.2.1 (30f49d6)	gl_tutorial_25_starts	input.gz	3	8	1-25			2.29		684	success=25 expected_s=2.29
+e5-2699v4	0.2.1 (30f49d6)	gl_tutorial_25_starts	input.gz	4	8	1-25			2.92		825	success=24 expected_s=3.04
+e5-2699v4	0.2.1 (30f49d6)	gl_tutorial_25_starts	input.gz	5	8	1-25			3.91		1009	success=14 expected_s=6.99
+e5-2699v4	0.2.1 (30f49d6)	gl_tutorial_25_starts	input.gz	6	8	1-25			6.04		1428	success=16 expected_s=9.44
+e5-2699v4	0.2.2	gl_tutorial_25_starts	input.gz	3	8	1-25			2.22		651	success=25 expected_s=2.22
+e5-2699v4	0.2.2	gl_tutorial_25_starts	input.gz	4	8	1-25			2.69		772	success=24 expected_s=2.81
+e5-2699v4	0.2.2	gl_tutorial_25_starts	input.gz	5	8	1-25			3.57		893	success=14 expected_s=6.37
+e5-2699v4	0.2.2	gl_tutorial_25_starts	input.gz	6	8	1-25			5.29		1221	success=16 expected_s=8.27

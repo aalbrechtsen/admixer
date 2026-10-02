@@ -1,0 +1,100 @@
+server	data	M	N	K	threads	seed	wall_s	cpu_s	loglik	iterations	protocol	source
+gold6152	blue_wildebeest_noLD	37567	73	7	8	1	32.64		-2906767.566533	22	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	10	73.35		-2933024.764952	62	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	11	82.32		-2915377.700744	47	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	12	71.43		-2933220.493648	43	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	13	48.47		-2906767.594456	27	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	14	77.33		-2915838.953687	47	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	15	44.58		-2906767.728553	21	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	16	42.65		-2906767.542941	22	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	17	79.42		-2915466.273467	49	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	18	49.09		-2906767.539246	22	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	19	69.98		-2933807.672447	42	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	2	65.31		-2934109.402160	53	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	20	95.15		-2915612.450406	56	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	21	78.61		-2933994.118907	45	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	22	45.73		-2906767.497194	25	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	23	123.09		-2916599.603519	65	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	24	45.34		-2906767.590715	26	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	25	41.16		-2906767.557029	21	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	26	98.72		-2916788.833312	64	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	27	72.40		-2933799.354212	43	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	28	95.47		-2916404.458916	56	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	29	61.80		-2935446.014024	28	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	3	75.44		-2934313.036426	54	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	30	42.45		-2906767.605308	24	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	4	34.52		-2906767.528840	23	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	5	42.34		-2906767.507062	30	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	6	63.73		-2916739.428686	44	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	7	35.72		-2906767.655527	24	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	8	33.75		-2906767.502531	24	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	blue_wildebeest_noLD	37567	73	7	8	9	78.92		-2916714.024053	57	one run at a time	admixer/data/conv_test/admixture/s*/
+gold6152	H1	10000	600	8	8	1	403.59	3220.52	-6029763.905206	175	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	2	211.25	1684.79	-6029763.905195	92	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	3	388.71	3091.35	-6029803.588906	173	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	4	166.39	1324.82	-6029877.348046	73	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	5	138.09	1103.08	-6029763.909032	63	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	6	381.93	3053.31	-6029803.588976	169	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	7	438.73	3503.59	-6029763.908654	199	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	8	441.73	3523.43	-6029763.905255	189	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	9	268.84	2144.03	-6029763.907833	119	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	H1	10000	600	8	8	10	272.48	2139.25	-6029763.908705	116	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_H1.txt
+gold6152	L2	10000	600	10	8	1	239.45	1817.94	-6332932.648084	64	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	2	265.85	2056.46	-6332971.037542	84	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	3	262.66	2070.78	-6332942.500261	97	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	4	146.28	1166.07	-6332932.648914	55	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	5	680.16	5390.63	-6332932.648390	263	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	6	274.67	2180.96	-6332932.648683	104	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	7	181.78	1443.16	-6332971.036720	71	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	8	172.91	1367.53	-6332961.819543	67	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	9	415.02	3307.09	-6333302.995145	168	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	L2	10000	600	10	8	10	381.39	3033.97	-6333300.531071	149	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_L2.txt
+gold6152	S2	10000	600	8	8	1	553.33	4265.00	-6081284.592270	211	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	2	627.87	4805.88	-6081276.200164	198	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	3	439.59	3426.45	-6081269.166945	192	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	4	397.15	3159.25	-6081222.852151	179	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	5	357.06	2830.41	-6081188.481011	152	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	6	540.55	4309.37	-6081226.398272	235	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	7	587.67	4664.26	-6081252.579575	265	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	8	592.10	4620.81	-6081188.513371	241	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	9	837.54	6449.53	-6081250.491944	337	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	S2	10000	600	8	8	10	584.14	4427.11	-6081295.636836	227	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_S2.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	1	98.44	692.46	-11818786.910864	15	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	2	351.37	2592.99	-11944317.758294	64	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	3	291.44	2163.40	-11946739.905780	56	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	4	105.69	765.33	-11818787.314506	21	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	5	342.13	2550.49	-11857421.013196	70	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	6	444.22	3259.57	-11851584.773750	97	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	7	464.81	3401.18	-11853598.980573	87	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	8	110.28	786.94	-11818787.651845	17	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	9	457.14	3346.94	-11855370.454114	95	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	blue_wildebeest_noLD_r02	185861	73	7	8	10	258.26	1865.77	-11941617.581781	43	3 runs at a time, 8 threads each	admix_prog/bench2/result_hard_WB02.txt
+gold6152	anch_20000_2000	20000	2000	5	8	1	477.27	3599.07	-42172774.435274	30	one run at a time	admix_prog/bench/result_table3.txt
+gold6152	anch_20000_2000	20000	2000	10	8	1	903.57	6964.52	-42334204.326860	33	one run at a time	admix_prog/bench/result_table3.txt
+gold6152	anch_20000_2000	20000	2000	20	8	1	1542.98	12049.62	-42490828.776722	26	one run at a time	admix_prog/bench/result_table3.txt
+gold6152	anch_20000_2000	20000	2000	5	64	1	390.72	21410.53	-42172774.435274	30	one run at a time	admix_prog/bench/result_table3.txt
+gold6152	anch_20000_2000	20000	2000	10	64	1	844.37	47014.92	-42334204.326860	33	one run at a time	admix_prog/bench/result_table3.txt
+gold6152	anch_20000_2000	20000	2000	20	64	1	1110.80	62149.39	-42490828.776722	26	one run at a time	admix_prog/bench/result_table3.txt
+e5-2699v4	sim100k	100000	2000	5	8	1	1376.91	10846.08	-210712543.734138	24	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	sim100k	100000	2000	10	8	1	3907.18	30562.31	-211956589.185631	53	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	sim100k	100000	2000	20	8	1	4194.28	33121.88	-212247490.884178	35	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	1	112.55	785.87	-11818786.897337	15	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	10	178.10	1309.06	-11941617.586352	43	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	2	268.51	1942.18	-11944317.746418	64	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	3	385.76	2815.12	-11946739.910163	56	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	4	100.06	724.61	-11818787.313502	21	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	5	300.40	2196.98	-11857421.014002	70	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	6	648.30	4663.88	-11851584.774446	97	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	7	385.48	2835.84	-11853599.000060	87	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	8	81.32	590.63	-11818787.665652	17	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD_r02	185861	73	7	8	9	468.82	3448.24	-11855370.470413	106	up to 5 runs at a time on disjoint physical cores	session scratchpad abl/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	1	32.62		-2906767.566533	22	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	10	79.84		-2933024.764952	62	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	2	76.74		-2934109.402160	53	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	3	75.50		-2934313.036426	54	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	4	34.92		-2906767.528840	23	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	5	44.52		-2906767.507062	30	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	6	62.11		-2916739.428686	44	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	7	34.79		-2906767.655527	24	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	8	33.84		-2906767.502531	24	one run at a time (README protocol)	session scratchpad readme2/adm/
+e5-2699v4	blue_wildebeest_noLD	37567	73	7	8	9	72.65		-2916714.024053	57	one run at a time (README protocol)	session scratchpad readme2/adm/

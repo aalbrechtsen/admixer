@@ -1,0 +1,7 @@
+server	program	data	K	threads	em_step_s	qn_iteration_s	qn_iterations_timed
+e5-2699v4	ADMIXTURE	sim100k	5	8	30.414	60.698	2
+e5-2699v4	admixer	sim100k	5	8	0.359	1.232	5
+e5-2699v4	ADMIXTURE	sim100k	5	16	24.044	86.303	2
+e5-2699v4	admixer	sim100k	5	16	0.182	0.635	5
+e5-2699v4	ADMIXTURE	sim100k	5	44	26.062	92.806	2
+e5-2699v4	admixer	sim100k	5	44	0.081	0.343	5
