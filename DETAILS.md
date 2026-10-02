@@ -101,7 +101,8 @@ Mainly for benchmarking: `--bound=X` (P in [X, 1 − X] and Q ≥ X; default 1e-
 1e-9 for GLs as NGSadmix), `--prime=X` (EM steps before the main algorithm), `--minibatch=X` (initial number
 of mini-batches of the warm-up), `--hess=exact|em` (curvature of the Newton steps for GLs), `--qn-damp=X` and
 `--qn-damp-factor=F` (retries of a rejected quasi-Newton extrapolation with the step scaled by F; default 1 and
-0.5, 0 = ADMIXTURE's rule), `--hess-float=auto|0|1` (single-precision Newton Hessians in the main algorithm;
+0.5, 0 = ADMIXTURE's rule), `--smallk=0|1` (register-blocked kernels for K = 2–7 instead of OpenBLAS; default 1),
+`--hess-float=auto|0|1` (single-precision Newton Hessians in the main algorithm;
 default auto: called genotypes with K ≥ 8) and `--max-iter=X`.
 
 ## Performance
@@ -114,6 +115,13 @@ H = P Qᵀ (BLAS), the per-entry likelihood terms, and the Hessians and gradient
   logs.
 * The small Newton/QP problems per row of P and Q use a Cholesky-based active-set solver; rows of P (box
   constraints only) first try a primal-dual active-set method, which moves many bounds per iteration.
+* **Small K (2–7):** OpenBLAS's matrix products are inefficient when the inner dimension is only K (or
+  K(K+1)/2 for the Hessians). For these K the Newton passes use register-blocked kernels (`src/smallk.hpp`,
+  compiled for each K) for H = P Qᵀ, the Hessians and the gradients, fused with the per-entry step in blocks of
+  8–16 SNPs so that the intermediate tiles stay in the CPU caches. Same results to rounding; 9–22 % faster runs
+  with 8 threads and 22–27 % with 44 (M = 100,000, N = 2,000, K = 3–7), also at N = 10,000 and N = 73, and
+  10–37 % for genotype likelihoods. `--smallk=0` uses OpenBLAS instead. The portable binary uses them on CPUs
+  with AVX2 and FMA.
 * With 20,000 SNPs × 2,000 individuals and 8 threads, a run is 90–116× faster than ADMIXTURE 1.3.0 (K = 5–20).
   The October 2026 kernels made a run 1.7–3.2× faster than admixer 0.2.1 (M = 100k, N = 2k, K = 5–20,
   8 threads), with the same iterates.

@@ -15,9 +15,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 #include <vector>
 
 #include "linalg.hpp"
+#include "smallk.hpp"
 
 template <class Data>
 struct Model {
@@ -33,6 +35,24 @@ struct Model {
   // The gradient, the per-entry pass and the QPs stay in double, so the fixed points do not change; the
   // Fitter switches it on for the quasi-Newton phase only.
   bool hess_float = false;
+  // register-blocked kernels for 2 <= K <= SMALLK_MAX (smallk.hpp) instead of OpenBLAS in sqp_P / sqp_Q (double
+  // precision only): same results to rounding, faster where OpenBLAS's GEMMs with inner dimension K are inefficient
+  bool use_smallk_kernels = true;
+  static constexpr int SMALLK_MAX = 7;
+  bool smallk_cpu = smallk::available();
+  bool smallk_active() const { return use_smallk_kernels && smallk_cpu && !hess_float && K >= 2 && K <= SMALLK_MAX; }
+  // calls f(std::integral_constant<int, K>()) for 2 <= K <= SMALLK_MAX
+  template <class F>
+  decltype(auto) smallk_dispatch(F&& f) const {
+    switch (K) {
+      case 2: return f(std::integral_constant<int, 2>());
+      case 3: return f(std::integral_constant<int, 3>());
+      case 4: return f(std::integral_constant<int, 4>());
+      case 5: return f(std::integral_constant<int, 5>());
+      case 6: return f(std::integral_constant<int, 6>());
+      default: return f(std::integral_constant<int, 7>());
+    }
+  }
   Model(const Data& D_, int K_) : D(D_), K(K_), nP((size_t)D_.M * K_), nQ((size_t)D_.N * K_), qfix(D_.N, 0) {
     openblas_set_num_threads(1);  // parallelism comes from OpenMP over tiles
   }
@@ -255,6 +275,8 @@ struct Model {
 
   double sqp_P(const double* Q, const double* P0, double* P1, int ja = 0, int jb = -1) const {
     if (jb < 0) jb = D.M;
+    if (smallk_active())
+      return smallk_dispatch([&](auto kc) { return sqp_P_small<decltype(kc)::value>(Q, P0, P1, ja, jb); });
     const int N = D.N, kp = KP(), nsb = (jb - ja + TJ - 1) / TJ;
     const bool hf = hess_float;
     // Z_i = packed(q_i q_i') for all individuals, packed once per call (shared by the threads) unless it would
@@ -320,21 +342,36 @@ struct Model {
   // Newton/QP step for every row of Q given P, from the sites [ja, jb). Tasks are blocks of individuals;
   // with few individuals the SNPs are split among the threads as well, and the partial Hessians and
   // gradients are summed before the QPs.
-  void sqp_Q(const double* P, const double* Q0, double* Q1, int ja = 0, int jb = -1) const {
-    if (jb < 0) jb = D.M;
-    const int N = D.N, kp = KP(), nt = omp_get_max_threads();
-    // Long individual blocks: the elementwise pass runs along rows of length bi, and Y is packed once per
-    // block of individuals (bi = 1024, bj = 64 was fastest at K = 5-20 with 8 threads, 2-2.6x faster than
-    // 56 x 512). The tasks (2 per thread) come from blocks of individuals x SNP splits. Each split holds a
-    // copy of the Q Hessians (N x KP), which is allocated, zeroed and summed in every call, so there are at
-    // most MAX_SPLITS of them: with many threads the blocks of individuals get shorter instead (64 threads,
-    // N = 2000: 64 splits of 1024-blocks were 2-4x slower at K = 10-20 than the old code).
+  // Task grid of sqp_Q: blocks of bi individuals x nsp SNP splits, tiles of bj SNPs.
+  // Long individual blocks: the elementwise pass runs along rows of length bi, and Y is packed once per
+  // block of individuals (bi = 1024, bj = 64 was fastest at K = 5-20 with 8 threads, 2-2.6x faster than
+  // 56 x 512). The tasks (2 per thread) come from blocks of individuals x SNP splits. Each split holds a
+  // copy of the Q Hessians (N x KP), which is allocated, zeroed and summed in every call, so there are at
+  // most MAX_SPLITS of them: with many threads the blocks of individuals get shorter instead (64 threads,
+  // N = 2000: 64 splits of 1024-blocks were 2-4x slower at K = 10-20 than the old code).
+  struct QGrid {
+    int bi, bj, nib, nsp;
+  };
+  QGrid q_grid(int ja, int jb) const {
+    const int N = D.N, nt = omp_get_max_threads();
     constexpr int MAX_SPLITS = 8;
     const int want_nib = (2 * nt + MAX_SPLITS - 1) / MAX_SPLITS;
     const int bi = std::max(64, std::min(1024, (N / want_nib + 7) / 8 * 8));  // individuals per task
     const int bj = 64;                                                         // SNPs per tile
     const int nib = (N + bi - 1) / bi;
     const int nsp = std::max(1, std::min({(jb - ja) / bj, (2 * nt + nib - 1) / nib, MAX_SPLITS}));  // SNP splits
+    return {bi, bj, nib, nsp};
+  }
+
+  void sqp_Q(const double* P, const double* Q0, double* Q1, int ja = 0, int jb = -1) const {
+    if (jb < 0) jb = D.M;
+    if (smallk_active()) {
+      smallk_dispatch([&](auto kc) { sqp_Q_small<decltype(kc)::value>(P, Q0, Q1, ja, jb); });
+      return;
+    }
+    const int N = D.N, kp = KP();
+    const QGrid qg = q_grid(ja, jb);
+    const int bi = qg.bi, bj = qg.bj, nib = qg.nib, nsp = qg.nsp;
     std::vector<double> HpAll((size_t)nsp * N * kp, 0.0), GAll((size_t)nsp * N * K, 0.0);
 #pragma omp parallel
     {
@@ -375,6 +412,124 @@ struct Model {
           }
         }
     }
+    q_solve(HpAll, GAll, nsp, Q0, Q1);
+  }
+
+  // ---- small-K kernels (smallk.hpp): sqp_P and sqp_Q for a compile-time K. A tile is processed in sub-blocks of
+  // a few SNPs: h for the sub-block (register-blocked P Q'), the per-entry pass, then the Hessian and gradient
+  // products while the sub-block is still in L1/L2 (OpenBLAS's GEMMs are inefficient for inner dimensions of K
+  // or K(K+1)/2 <= 28). Operands are zero-padded to whole vectors. Same results as the BLAS path to rounding.
+  template <int KC>
+  SMALLK_TARGET double sqp_P_small(const double* Q, const double* P0, double* P1, int ja, int jb) const {
+    constexpr int K = KC, kp = K * (K + 1) / 2, VL = smallk::VL;
+    constexpr int NVZ = (kp + VL - 1) / VL, kpp = NVZ * VL;  // packed Hessian row, padded to whole vectors
+    constexpr int NVQ = (K + VL - 1) / VL, ldq = NVQ * VL;   // Q row (gradient operand), padded
+    constexpr int RS = 8;                                    // SNPs per sub-block
+    const int N = D.N, nsb = (jb - ja + TJ - 1) / TJ, ldt = smallk::rup(std::min(TI, N));
+    std::vector<double> part(nsb, 0.0);
+#pragma omp parallel
+    {
+      std::vector<double> T((size_t)RS * ldt), W((size_t)RS * ldt, 0.0), Z((size_t)ldt * kpp), Hp((size_t)TJ * kpp),
+          G((size_t)TJ * K), Qt((size_t)K * ldt), Qp((size_t)ldt * ldq), Gs((size_t)RS * ldq);
+      std::vector<double> H(K * K), lo(K), hi(K), d(K);
+#pragma omp for schedule(dynamic, 1)
+      for (int sb = 0; sb < nsb; sb++) {
+        const int j0 = ja + sb * TJ, jn = std::min(TJ, jb - j0);
+        std::fill(Hp.begin(), Hp.end(), 0.0);
+        std::fill(G.begin(), G.end(), 0.0);
+        for (int i0 = 0; i0 < N; i0 += TI) {
+          const int in = std::min(TI, N - i0), n = smallk::rup(in);
+          const double* Qi = Q + (size_t)i0 * K;
+          for (int k = 0; k < K; k++) {  // Qt (K x n), Qp (n x ldq) and Z (n x kpp), zero padded
+            double* qt = Qt.data() + (size_t)k * ldt;
+            for (int ii = 0; ii < n; ii++) qt[ii] = ii < in ? Qi[(size_t)ii * K + k] : 0.0;
+          }
+          for (int ii = 0; ii < n; ii++) {
+            double* qp = Qp.data() + (size_t)ii * ldq;
+            double* z = Z.data() + (size_t)ii * kpp;
+            for (int k = 0; k < ldq; k++) qp[k] = ii < in && k < K ? Qi[(size_t)ii * K + k] : 0.0;
+            if (ii < in) pack_outer(Qi + (size_t)ii * K, z);
+            for (int p = ii < in ? kp : 0; p < kpp; p++) z[p] = 0.0;
+          }
+          for (int r0 = 0; r0 < jn; r0 += RS) {
+            const int rn = std::min(RS, jn - r0);
+            smallk::h_rows<K>(rn, P0 + (size_t)(j0 + r0) * K, Qt.data(), ldt, n, T.data(), ldt);
+            for (int r = 0; r < rn; r++)
+              part[sb] += D.tile_wd(j0 + r0 + r, 1, i0, in, T.data() + (size_t)r * ldt, W.data() + (size_t)r * ldt,
+                                    PMIN, PMAX);
+            smallk::bc_rows<NVZ>(rn, W.data(), ldt, Z.data(), n, Hp.data() + (size_t)r0 * kpp);
+            std::fill(Gs.begin(), Gs.end(), 0.0);
+            smallk::bc_rows<NVQ>(rn, T.data(), ldt, Qp.data(), n, Gs.data());
+            for (int r = 0; r < rn; r++)
+              for (int k = 0; k < K; k++) G[(size_t)(r0 + r) * K + k] += Gs[(size_t)r * ldq + k];
+          }
+        }
+        for (int jj = 0; jj < jn; jj++) {
+          const double* f = P0 + (size_t)(j0 + jj) * K;
+          unpack_sym(Hp.data() + (size_t)jj * kpp, H.data());
+          for (int k = 0; k < K; k++) lo[k] = PMIN - f[k], hi[k] = PMAX - f[k];
+          qp_active_set(K, H.data(), G.data() + (size_t)jj * K, lo.data(), hi.data(), false, d.data());
+          double* fo = P1 + (size_t)(j0 + jj) * K;
+          for (int k = 0; k < K; k++) fo[k] = std::min(std::max(f[k] + d[k], PMIN), PMAX);
+        }
+      }
+    }
+    return sum_in_order(part);
+  }
+
+  template <int KC>
+  SMALLK_TARGET void sqp_Q_small(const double* P, const double* Q0, double* Q1, int ja, int jb) const {
+    constexpr int K = KC, kp = K * (K + 1) / 2;
+    constexpr int RS = 16;  // SNPs per sub-block
+    const int N = D.N;
+    const QGrid qg = q_grid(ja, jb);
+    const int bi = qg.bi, nib = qg.nib, nsp = qg.nsp, ldb = smallk::rup(bi);
+    std::vector<double> HpAll((size_t)nsp * N * kp, 0.0), GAll((size_t)nsp * N * K, 0.0);
+#pragma omp parallel
+    {
+      // transposed accumulators (individuals in the vector lanes): HT (kp x n) = Y' W, GT (K x n) = P' D
+      std::vector<double> Qt((size_t)K * ldb), HT((size_t)kp * ldb), GT((size_t)K * ldb), Y((size_t)RS * kp);
+      std::vector<double> Ts((size_t)RS * ldb, 0.0), Ws((size_t)RS * ldb, 0.0);
+#pragma omp for schedule(dynamic, 1) collapse(2)
+      for (int ib = 0; ib < nib; ib++)
+        for (int sp = 0; sp < nsp; sp++) {
+          const int i0 = ib * bi, in = std::min(bi, N - i0), n = smallk::rup(in);
+          const int sa = ja + (int)((long)(jb - ja) * sp / nsp), sz = ja + (int)((long)(jb - ja) * (sp + 1) / nsp);
+          const double* Qi = Q0 + (size_t)i0 * K;
+          for (int k = 0; k < K; k++) {
+            double* qt = Qt.data() + (size_t)k * ldb;
+            for (int ii = 0; ii < n; ii++) qt[ii] = ii < in ? Qi[(size_t)ii * K + k] : 0.0;
+          }
+          std::fill(HT.begin(), HT.end(), 0.0);
+          std::fill(GT.begin(), GT.end(), 0.0);
+          for (int j0 = sa; j0 < sz; j0 += RS) {
+            const int jn = std::min(RS, sz - j0);
+            const double* Pj = P + (size_t)j0 * K;
+            smallk::h_rows<K>(jn, Pj, Qt.data(), ldb, n, Ts.data(), ldb);
+            for (int r = 0; r < jn; r++) {
+              double* wr = Ws.data() + (size_t)r * ldb;
+              D.tile_wd(j0 + r, 1, i0, in, Ts.data() + (size_t)r * ldb, wr, PMIN, PMAX);
+              for (int ii = in; ii < n; ii++) wr[ii] = 0.0;
+              pack_outer(Pj + (size_t)r * K, Y.data() + (size_t)r * kp);
+            }
+            smallk::acc_cols<K>(jn, Ts.data(), ldb, Pj, K, n, GT.data(), ldb);
+            smallk::acc_cols<kp>(jn, Ws.data(), ldb, Y.data(), kp, n, HT.data(), ldb);
+          }
+          double* Hp = HpAll.data() + ((size_t)sp * N + i0) * kp;
+          double* G = GAll.data() + ((size_t)sp * N + i0) * K;
+          for (int ii = 0; ii < in; ii++) {
+            for (int p = 0; p < kp; p++) Hp[(size_t)ii * kp + p] = HT[(size_t)p * ldb + ii];
+            for (int k = 0; k < K; k++) G[(size_t)ii * K + k] = GT[(size_t)k * ldb + ii];
+          }
+        }
+    }
+    q_solve(HpAll, GAll, nsp, Q0, Q1);
+  }
+
+  // The Newton/QP step for every row of Q from the per-split Hessians and gradients (nsp x N x KP, nsp x N x K).
+  void q_solve(const std::vector<double>& HpAll, const std::vector<double>& GAll, int nsp, const double* Q0,
+               double* Q1) const {
+    const int N = D.N, kp = KP();
 #pragma omp parallel
     {
       std::vector<double> H(K * K), hp(kp), g(K), lo(K), hi(K), d(K);

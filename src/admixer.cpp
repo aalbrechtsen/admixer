@@ -69,6 +69,7 @@ static void usage(int code) {
       "  --hess-float=X      Newton Hessians from single-precision matrix products in the quasi-Newton phase:\n"
       "                      1 on, 0 off (exact double precision), auto (default): on for called genotypes\n"
       "                      with K >= 8, off for genotype likelihoods\n"
+      "  --smallk=X          1 (default): register-blocked kernels for K = 2-7 in the Newton steps; 0: OpenBLAS\n"
       "  --qn-damp=X         retry a rejected quasi-Newton extrapolation up to X times with the step scaled by\n"
       "                      --qn-damp-factor (default X = 1, factor 0.5; X = 0: ADMIXTURE's rule, F(F(x)) at once)\n"
       "  -h, --help          this help\n",
@@ -92,6 +93,7 @@ struct Options {
   int prime = -1, minibatch = -1;        // < 0: the data type's default
   std::string input, prefix, out, hess = "exact";
   bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true, write_P = true;
+  bool smallk = true;  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
 
 static bool is_beagle(const std::string& f) { return !ends_with(f, ".bed"); }
@@ -121,6 +123,8 @@ static void analyse(Data& D, Options& o, double t0) {
   if (fs.hess_float > 0)
     say("Newton Hessians of the main algorithm: single-precision matrix products (--hess-float=0: double)%s\n",
         gl ? "; not recommended for genotype likelihoods" : "");
+  if (o.smallk && K >= 2 && K <= Model<Data>::SMALLK_MAX && smallk::available())
+    say("Newton steps: register-blocked kernels for K = %d instead of OpenBLAS (--smallk=0: OpenBLAS)\n", K);
   say("Point estimation will terminate when objective function delta < %g\n", fs.tol);
   say(gl ? "Size of GL data: %dx%d\n" : "Size of G: %dx%d\n", D.N, D.M);
   say("Threads: %d\n", o.threads);
@@ -160,6 +164,7 @@ static void analyse(Data& D, Options& o, double t0) {
   }
 
   Model<Data> m(D, K);
+  m.use_smallk_kernels = o.smallk;
   m.set_bound(o.bound);
   Vec x0(m.size());  // fixed parts (projection P, supervised rows) shared by all runs
   if (o.projection) {
@@ -298,7 +303,11 @@ int main(int argc, char** argv) {
     else if (s.rfind("--bound", 0) == 0) o.bound = std::atof(opt_value(argc, argv, a, "--bound").c_str());
     else if (s.rfind("--prime", 0) == 0) o.prime = std::atoi(opt_value(argc, argv, a, "--prime").c_str());
     else if (s.rfind("--minibatch", 0) == 0) o.minibatch = std::atoi(opt_value(argc, argv, a, "--minibatch").c_str());
-    else if (s.rfind("--hess-float", 0) == 0) {
+    else if (s.rfind("--smallk", 0) == 0) {
+      const std::string v = opt_value(argc, argv, a, "--smallk");
+      if (v != "0" && v != "1") usage(1);
+      o.smallk = v == "1";
+    } else if (s.rfind("--hess-float", 0) == 0) {
       const std::string v = opt_value(argc, argv, a, "--hess-float");
       if (v == "auto") fs.hess_float = -1;
       else if (v == "0" || v == "1") fs.hess_float = v == "1";
