@@ -29,6 +29,10 @@ struct Model {
   std::vector<double> Tbuf;              // per-thread EM accumulators for Q
   std::vector<char> qfix;                // qfix[i]: row i of Q is held fixed (supervised mode)
   bool pfix = false;                     // P is held fixed (projection mode)
+  // Newton Hessians from single-precision matrix products (w and Z/Y in float, accumulated in double).
+  // The gradient, the per-entry pass and the QPs stay in double, so the fixed points do not change; the
+  // Fitter switches it on for the quasi-Newton phase only.
+  bool hess_float = false;
   Model(const Data& D_, int K_) : D(D_), K(K_), nP((size_t)D_.M * K_), nQ((size_t)D_.N * K_), qfix(D_.N, 0) {
     openblas_set_num_threads(1);  // parallelism comes from OpenMP over tiles
   }
@@ -88,7 +92,8 @@ struct Model {
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, jn, in, K, 1.0, P + (size_t)j0 * K, K,
                 Q + (size_t)i0 * K, K, 0.0, H, in);
   }
-  void pack_outer(const double* v, double* z) const {
+  template <class TZ>
+  void pack_outer(const double* v, TZ* z) const {
     for (int k = 0, p = 0; k < K; k++)
       for (int l = k; l < K; l++) z[p++] = v[k] * v[l];
   }
@@ -251,11 +256,25 @@ struct Model {
   double sqp_P(const double* Q, const double* P0, double* P1, int ja = 0, int jb = -1) const {
     if (jb < 0) jb = D.M;
     const int N = D.N, kp = KP(), nsb = (jb - ja + TJ - 1) / TJ;
+    const bool hf = hess_float;
+    // Z_i = packed(q_i q_i') for all individuals, packed once per call (shared by the threads) unless it would
+    // take more than 256 MB; otherwise per tile.
+    const bool zonce = (size_t)N * kp * (hf ? sizeof(float) : sizeof(double)) <= ((size_t)256 << 20);
+    std::vector<double> Zd(zonce && !hf ? (size_t)N * kp : 0);
+    std::vector<float> Zf(zonce && hf ? (size_t)N * kp : 0);
+    if (zonce) {
+#pragma omp parallel for schedule(static)
+      for (int i = 0; i < N; i++) {
+        if (hf) pack_outer(Q + (size_t)i * K, Zf.data() + (size_t)i * kp);
+        else pack_outer(Q + (size_t)i * K, Zd.data() + (size_t)i * kp);
+      }
+    }
     std::vector<double> part(nsb, 0.0);
 #pragma omp parallel
     {
-      std::vector<double> T((size_t)TJ * TI), W((size_t)TJ * TI), Z((size_t)TI * kp), Hp(TJ * kp), G(TJ * K);
-      std::vector<double> H(K * K), lo(K), hi(K), d(K);
+      std::vector<double> T((size_t)TJ * TI), W(hf ? 0 : (size_t)TJ * TI), Z(zonce || hf ? 0 : (size_t)TI * kp);
+      std::vector<float> Wf(hf ? (size_t)TJ * TI : 0), Ztf(hf && !zonce ? (size_t)TI * kp : 0), Hf(hf ? TJ * kp : 0);
+      std::vector<double> Hp(TJ * kp), G(TJ * K), H(K * K), lo(K), hi(K), d(K);
 #pragma omp for schedule(dynamic, 1)
       for (int sb = 0; sb < nsb; sb++) {
         const int j0 = ja + sb * TJ, jn = std::min(TJ, jb - j0);
@@ -265,10 +284,23 @@ struct Model {
           const int in = std::min(TI, N - i0);
           const double* Qi = Q + (size_t)i0 * K;
           tile_h(P0, Q, j0, jn, i0, in, T.data());
-          part[sb] += D.tile_wd(j0, jn, i0, in, T.data(), W.data(), PMIN, PMAX);
-          for (int ii = 0; ii < in; ii++) pack_outer(Qi + (size_t)ii * K, Z.data() + (size_t)ii * kp);
-          cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, jn, kp, in, 1.0, W.data(), in, Z.data(), kp, 1.0,
-                      Hp.data(), kp);
+          if (hf) {
+            part[sb] += D.tile_wd(j0, jn, i0, in, T.data(), Wf.data(), PMIN, PMAX);
+            if (!zonce)
+              for (int ii = 0; ii < in; ii++) pack_outer(Qi + (size_t)ii * K, Ztf.data() + (size_t)ii * kp);
+            const float* z = zonce ? Zf.data() + (size_t)i0 * kp : Ztf.data();
+            // float product per tile of individuals (at most TI terms), added to the double accumulator
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, jn, kp, in, 1.0f, Wf.data(), in, z, kp, 0.0f,
+                        Hf.data(), kp);
+            for (int t = 0; t < jn * kp; t++) Hp[t] += Hf[t];
+          } else {
+            part[sb] += D.tile_wd(j0, jn, i0, in, T.data(), W.data(), PMIN, PMAX);
+            if (!zonce)
+              for (int ii = 0; ii < in; ii++) pack_outer(Qi + (size_t)ii * K, Z.data() + (size_t)ii * kp);
+            const double* z = zonce ? Zd.data() + (size_t)i0 * kp : Z.data();
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, jn, kp, in, 1.0, W.data(), in, z, kp, 1.0,
+                        Hp.data(), kp);
+          }
           cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, jn, K, in, 1.0, T.data(), in, Qi, K, 1.0,
                       G.data(), K);
         }
@@ -306,7 +338,12 @@ struct Model {
     std::vector<double> HpAll((size_t)nsp * N * kp, 0.0), GAll((size_t)nsp * N * K, 0.0);
 #pragma omp parallel
     {
-      std::vector<double> T((size_t)bj * bi), W((size_t)bj * bi), Y((size_t)bj * kp);
+      const bool hf = hess_float;
+      std::vector<double> T((size_t)bj * bi), W(hf ? 0 : (size_t)bj * bi), Y(hf ? 0 : (size_t)bj * kp);
+      // float: w, Y and the Hessian products in single precision, flushed to the double accumulator every
+      // FLUSH tiles (at most FLUSH * bj = 1024 terms summed in float)
+      constexpr int FLUSH = 16;
+      std::vector<float> Wf(hf ? (size_t)bj * bi : 0), Yf(hf ? (size_t)bj * kp : 0), Hf(hf ? (size_t)bi * kp : 0);
 #pragma omp for schedule(dynamic, 1) collapse(2)
       for (int ib = 0; ib < nib; ib++)
         for (int sp = 0; sp < nsp; sp++) {
@@ -314,14 +351,26 @@ struct Model {
           const int sa = ja + (int)((long)(jb - ja) * sp / nsp), sz = ja + (int)((long)(jb - ja) * (sp + 1) / nsp);
           double* Hp = HpAll.data() + ((size_t)sp * N + i0) * kp;
           double* G = GAll.data() + ((size_t)sp * N + i0) * K;
+          int nf = 0;  // tiles accumulated in Hf
           for (int j0 = sa; j0 < sz; j0 += bj) {
             const int jn = std::min(bj, sz - j0);
             const double* Pj = P + (size_t)j0 * K;
             tile_h(P, Q0, j0, jn, i0, in, T.data());
-            D.tile_wd(j0, jn, i0, in, T.data(), W.data(), PMIN, PMAX);
-            for (int jj = 0; jj < jn; jj++) pack_outer(Pj + (size_t)jj * K, Y.data() + (size_t)jj * kp);
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, in, kp, jn, 1.0, W.data(), in, Y.data(), kp, 1.0, Hp,
-                        kp);
+            if (hf) {
+              D.tile_wd(j0, jn, i0, in, T.data(), Wf.data(), PMIN, PMAX);
+              for (int jj = 0; jj < jn; jj++) pack_outer(Pj + (size_t)jj * K, Yf.data() + (size_t)jj * kp);
+              cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, in, kp, jn, 1.0f, Wf.data(), in, Yf.data(), kp,
+                          nf == 0 ? 0.0f : 1.0f, Hf.data(), kp);
+              if (++nf == FLUSH || j0 + bj >= sz) {
+                for (size_t t = 0; t < (size_t)in * kp; t++) Hp[t] += Hf[t];
+                nf = 0;
+              }
+            } else {
+              D.tile_wd(j0, jn, i0, in, T.data(), W.data(), PMIN, PMAX);
+              for (int jj = 0; jj < jn; jj++) pack_outer(Pj + (size_t)jj * K, Y.data() + (size_t)jj * kp);
+              cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, in, kp, jn, 1.0, W.data(), in, Y.data(), kp, 1.0, Hp,
+                          kp);
+            }
             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans, in, K, jn, 1.0, T.data(), in, Pj, K, 1.0, G, K);
           }
         }

@@ -23,6 +23,19 @@ testing and the differences from ADMIXTURE and NGSadmix.
    * Genotype likelihoods (NGSadmix tutorial data, K = 3–6; simulated GLs, M = 10,000, N = 2,000): the same optimum
      for every seed, 11 % less time in total (per data set and K from 2 % slower to 1.8× faster).
    * `--qn-damp=0` restores ADMIXTURE's rule.
+6. **Single-precision Hessians** (`--hess-float`, default auto: on for called genotypes with K ≥ 8). In the main
+   algorithm, the per-row Newton Hessians (the matrix products W Z and Wᵀ Y, the largest part of a pass at larger
+   K) are computed in single precision and accumulated in double. The gradient, the log-likelihood and the QP
+   steps stay in double, so the solutions the algorithm converges to are unchanged; the iterates differ at about
+   1e-6. The EM steps and the warm-up stay in double: there, the rounding changed which local optimum some runs
+   on multimodal data reached.
+   * Called genotypes (12 hard sets with 10 seeds and M = 100,000 data, K = 5–20, 8 threads): every seed reached
+     the same optimum as in double precision. At K ≥ 8 the runs were 6–35 % faster (more on hard data, where the
+     Hessians also needed fewer iterations); at K = 5–7 only 0–6 %, so auto leaves it off there.
+   * Genotype likelihoods: not used by default. With the GL bounds (1e-9) single precision loses the curvature
+     of most entries next to the near-bound ones, and on the NGSadmix tutorial data (K = 4–6) runs reached
+     worse optima and took 1.5–1.9× longer.
+   * `--hess-float=0` gives exact double precision, `--hess-float=1` forces single precision.
 
 The parameter bounds and the stopping rule are those of ADMIXTURE.
 
@@ -88,7 +101,8 @@ Mainly for benchmarking: `--bound=X` (P in [X, 1 − X] and Q ≥ X; default 1e-
 1e-9 for GLs as NGSadmix), `--prime=X` (EM steps before the main algorithm), `--minibatch=X` (initial number
 of mini-batches of the warm-up), `--hess=exact|em` (curvature of the Newton steps for GLs), `--qn-damp=X` and
 `--qn-damp-factor=F` (retries of a rejected quasi-Newton extrapolation with the step scaled by F; default 1 and
-0.5, 0 = ADMIXTURE's rule) and `--max-iter=X`.
+0.5, 0 = ADMIXTURE's rule), `--hess-float=auto|0|1` (single-precision Newton Hessians in the main algorithm;
+default auto: called genotypes with K ≥ 8) and `--max-iter=X`.
 
 ## Performance
 
@@ -158,7 +172,8 @@ reads are Poisson, with a sequencing error rate.
 
 **ADMIXTURE:**
 * Same model, likelihood, parameter bounds and stopping rule. Same algorithm, except that a rejected
-  quasi-Newton extrapolation is retried once with half the step (`--qn-damp=0`: ADMIXTURE's rule). Different
+  quasi-Newton extrapolation is retried once with half the step (`--qn-damp=0`: ADMIXTURE's rule), and for
+  K ≥ 8 the Newton Hessians of the main loop are computed in single precision (`--hess-float=0`: double). Different
   start: random P, near-uniform Q, 5 EM steps, then a mini-batch warm-up.
 * Not implemented: cross-validation (`--cv`), bootstrap standard errors (`-B`), penalised estimation
   (`-l`), haploid data, the EM method and the Fst printout. `-m` is admixer's maximum number of runs, not

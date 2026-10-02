@@ -43,10 +43,11 @@ struct Genotypes {
   // there is one log per lane per row (every probability is >= lo^2, so 16 factors cannot underflow for
   // bounds >= ~1e-19).
   // MODE 0: log-likelihood only; 1: EM ratios (A = r0 in place of h, B = r1); 2: Newton (A = d, B = w).
+  // TB: element type of B (float for the single-precision Hessians, see Model::hess_float).
   static constexpr int LANES = 8, PER_LOG = 16, BLK = LANES * PER_LOG;
-  template <int MODE>
+  template <int MODE, class TB = double>
   [[gnu::always_inline]]  // inlined into each CPU version of the tile kernels (kernel.hpp)
-  static inline double row_pass(const uint8_t* __restrict g, double* __restrict A, double* __restrict B, int n,
+  static inline double row_pass(const uint8_t* __restrict g, double* __restrict A, TB* __restrict B, int n,
                                 double lo, double hi) {
     double pr[BLK], gd[BLK], prod[LANES], ex[LANES];
     for (int l = 0; l < LANES; l++) prod[l] = 1, ex[l] = 0;
@@ -54,7 +55,7 @@ struct Genotypes {
       const int cn = std::min(BLK, n - c0);
       const uint8_t* gc = g + c0;
       double* Ac = A + c0;
-      double* Bc = MODE >= 1 ? B + c0 : nullptr;
+      TB* Bc = MODE >= 1 ? B + c0 : nullptr;
       for (int u = 0; u < cn; u++) gd[u] = gc[u];  // widened first: the main loop then has one element type
 #pragma omp simd
       for (int u = 0; u < cn; u++) {
@@ -98,7 +99,7 @@ struct Genotypes {
   ADMIXER_KERNEL double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool = false) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++) {
-      ll += row_pass<0>(row(j0 + jj) + i0, const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi);  // reads only
+      ll += row_pass<0, double>(row(j0 + jj) + i0, const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi);  // reads only
     }
     return ll;
   }
@@ -114,6 +115,12 @@ struct Genotypes {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)
       ll += row_pass<2>(row(j0 + jj) + i0, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);
+    return ll;
+  }  // the same with w in single precision (Hessian matrix products in float, Model::hess_float)
+  ADMIXER_KERNEL double tile_wd(int j0, int jn, int i0, int in, double* T, float* W, double lo, double hi) const {
+    double ll = 0;
+    for (int jj = 0; jj < jn; jj++)
+      ll += row_pass<2, float>(row(j0 + jj) + i0, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);
     return ll;
   }
   // Reorders the sites: row j becomes row perm[j] of the input.

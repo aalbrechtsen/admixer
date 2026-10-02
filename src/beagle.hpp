@@ -56,17 +56,17 @@ struct GLData {
   // MODE 0: log L only (all: missing entries included); 1: EM ratios (A = r0 in place of h, B = r1);
   // 2: Newton (A = d, B = w).
   static constexpr int LANES = 8, PER_LOG = 8, BLK = LANES * PER_LOG;
-  template <int MODE, bool EXACT>
+  template <int MODE, bool EXACT, class TB = double>  // TB: element type of B (float: see Model::hess_float)
   [[gnu::always_inline]]  // inlined into each CPU version of the tile kernels (kernel.hpp)
   static inline double row_pass(const float* __restrict l, const uint8_t* __restrict kp, double* __restrict A,
-                                double* __restrict B, int n, double lo, double hi, bool all) {
+                                TB* __restrict B, int n, double lo, double hi, bool all) {
     double pr[BLK], q0[BLK], q1[BLK], q2[BLK], kd[BLK], prod[LANES], ex[LANES];
     for (int t = 0; t < LANES; t++) prod[t] = 1, ex[t] = 0;
     for (int c0 = 0; c0 < n; c0 += BLK) {
       const int cn = std::min(BLK, n - c0);
       const float* lc = l + 3 * (size_t)c0;
       double* Ac = A + c0;
-      double* Bc = MODE >= 1 ? B + c0 : nullptr;
+      TB* Bc = MODE >= 1 ? B + c0 : nullptr;
       for (int u = 0; u < cn; u++) {
         q0[u] = lc[3 * u], q1[u] = lc[3 * u + 1], q2[u] = lc[3 * u + 2];
         kd[u] = (kp[c0 + u] || (MODE == 0 && all)) ? 1.0 : 0.0;
@@ -124,7 +124,7 @@ struct GLData {
   ADMIXER_KERNEL double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool all = false) const {
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)  // MODE 0 only reads the tile
-      ll += row_pass<0, true>(row(j0 + jj) + 3 * (size_t)i0, krow(j0 + jj) + i0,
+      ll += row_pass<0, true, double>(row(j0 + jj) + 3 * (size_t)i0, krow(j0 + jj) + i0,
                               const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi, all);
     return ll;
   }
@@ -144,6 +144,18 @@ struct GLData {
       double* w = W + (size_t)jj * in;
       ll += exact_hess ? row_pass<2, true>(l, kp, t, w, in, lo, hi, false)
                        : row_pass<2, false>(l, kp, t, w, in, lo, hi, false);
+    }
+    return ll;
+  }  // the same with w in single precision (Model::hess_float)
+  ADMIXER_KERNEL double tile_wd(int j0, int jn, int i0, int in, double* T, float* W, double lo, double hi) const {
+    double ll = 0;
+    for (int jj = 0; jj < jn; jj++) {
+      const float* l = row(j0 + jj) + 3 * (size_t)i0;
+      const uint8_t* kp = krow(j0 + jj) + i0;
+      double* t = T + (size_t)jj * in;
+      float* w = W + (size_t)jj * in;
+      ll += exact_hess ? row_pass<2, true, float>(l, kp, t, w, in, lo, hi, false)
+                       : row_pass<2, false, float>(l, kp, t, w, in, lo, hi, false);
     }
     return ll;
   }

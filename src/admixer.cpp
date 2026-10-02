@@ -66,6 +66,9 @@ static void usage(int code) {
       "  --prime=X           EM steps before the main algorithm (default 5 for genotypes, 0 for GLs)\n"
       "  --minibatch=X       initial number of mini-batches of the warm-up (default 32 for genotypes, 0 = off for GLs)\n"
       "  --hess=exact|em     GLs: curvature of the Newton steps (default exact; em = ADMIXTURE's EM-type weight)\n"
+      "  --hess-float=X      Newton Hessians from single-precision matrix products in the quasi-Newton phase:\n"
+      "                      1 on, 0 off (exact double precision), auto (default): on for called genotypes\n"
+      "                      with K >= 8, off for genotype likelihoods\n"
       "  --qn-damp=X         retry a rejected quasi-Newton extrapolation up to X times with the step scaled by\n"
       "                      --qn-damp-factor (default X = 1, factor 0.5; X = 0: ADMIXTURE's rule, F(F(x)) at once)\n"
       "  -h, --help          this help\n",
@@ -115,6 +118,9 @@ static void analyse(Data& D, Options& o, double t0) {
   say("Convergence acceleration algorithm: QuasiNewton, %d secant conditions", fs.qn_secants);
   if (fs.qn_damp > 0) say(", rejected extrapolations retried %dx with the step scaled by %g", fs.qn_damp, fs.qn_damp_factor);
   say("\n");
+  if (fs.hess_float > 0)
+    say("Newton Hessians of the main algorithm: single-precision matrix products (--hess-float=0: double)%s\n",
+        gl ? "; not recommended for genotype likelihoods" : "");
   say("Point estimation will terminate when objective function delta < %g\n", fs.tol);
   say(gl ? "Size of GL data: %dx%d\n" : "Size of G: %dx%d\n", D.N, D.M);
   say("Threads: %d\n", o.threads);
@@ -292,6 +298,12 @@ int main(int argc, char** argv) {
     else if (s.rfind("--bound", 0) == 0) o.bound = std::atof(opt_value(argc, argv, a, "--bound").c_str());
     else if (s.rfind("--prime", 0) == 0) o.prime = std::atoi(opt_value(argc, argv, a, "--prime").c_str());
     else if (s.rfind("--minibatch", 0) == 0) o.minibatch = std::atoi(opt_value(argc, argv, a, "--minibatch").c_str());
+    else if (s.rfind("--hess-float", 0) == 0) {
+      const std::string v = opt_value(argc, argv, a, "--hess-float");
+      if (v == "auto") fs.hess_float = -1;
+      else if (v == "0" || v == "1") fs.hess_float = v == "1";
+      else usage(1);
+    }
     else if (s.rfind("--hess", 0) == 0) o.hess = opt_value(argc, argv, a, "--hess");
     else if (s.rfind("--qn-damp-factor", 0) == 0)
       fs.qn_damp_factor = std::atof(opt_value(argc, argv, a, "--qn-damp-factor").c_str());
@@ -324,6 +336,10 @@ int main(int argc, char** argv) {
   if (o.bound < 0) o.bound = gl ? 1e-9 : 1e-5;
   fs.prime = o.prime >= 0 ? o.prime : gl ? 0 : 5;
   fs.minibatch = o.minibatch >= 0 ? o.minibatch : gl ? 0 : 32;
+  // single-precision Hessians: by default for called genotypes with K >= 8 only. With genotype likelihoods
+  // (bounds 1e-9, so weights up to ~1e18 next to O(1) ones) the rounded Hessians led runs to other, worse
+  // optima on the NGSadmix tutorial data, and the gain at small K is small.
+  if (fs.hess_float < 0) fs.hess_float = !gl && o.K >= FitSettings::HESS_FLOAT_MIN_K;
   omp_set_num_threads(o.threads);
   const std::string logname = o.out + "." + std::to_string(o.K) + ".log";
   log_file() = std::fopen(logname.c_str(), "w");

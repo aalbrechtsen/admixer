@@ -25,6 +25,10 @@ struct FitSettings {
   int qn_secants = 3;    // quasi-Newton secant pairs (as ADMIXTURE)
   int qn_damp = 1;       // after a rejected extrapolation, retry up to this many times with the step scaled by
   double qn_damp_factor = 0.5;  // this factor before falling back to F(F(x)) (0 = ADMIXTURE's rule)
+  int hess_float = -1;  // Newton Hessians from single-precision products in the quasi-Newton phase: 1 on, 0 off,
+                        // -1 auto (admixer.cpp: called genotypes with K >= HESS_FLOAT_MIN_K, where the Hessians
+                        // dominate a pass; never for genotype likelihoods)
+  static constexpr int HESS_FLOAT_MIN_K = 8;
   int prime = 5;         // EM steps before the main algorithm (as ADMIXTURE)
   int minibatch = 32;    // initial number of SNP mini-batches in the warm-up (0 = no warm-up)
   int mb_max_epochs = 100;
@@ -78,7 +82,11 @@ class Fitter {
     if (verbose) say("Initial loglikelihood: %f\n", ll);
     if (s_.minibatch > 1 && !m_.pfix) warmup(x, t0);
     if (verbose) say("Starting main algorithm\n");
+    // single precision only here: in the EM steps and the warm-up, where a run settles into a basin of
+    // attraction, the rounding changed which local optimum some runs on multimodal data reached
+    m_.hess_float = s_.hess_float > 0 || (s_.hess_float < 0 && m_.K >= FitSettings::HESS_FLOAT_MIN_K);
     FitResult r = qn(x, t0);
+    m_.hess_float = false;
     r.seconds = omp_get_wtime() - t0;
     return r;
   }
