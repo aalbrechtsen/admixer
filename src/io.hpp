@@ -212,27 +212,46 @@ inline void read_matrix(const std::string& fn, double* A, size_t rows, int K) {
   if (t != rows * K)
     throw std::runtime_error(fn + ": expected " + std::to_string(rows) + " x " + std::to_string(K) + " values");
 }
-// Writes the matrix with 6 decimals; gzip-compressed if gz.
+// Writes the matrix with 6 decimals; gzip-compressed if gz. Chunks of rows are formatted (and compressed) in
+// parallel on the OpenMP threads; a compressed file is a series of gzip members, one per chunk, which gzip,
+// zcat, zlib's gzread and R read as one stream. The text is the same as from a serial write.
+inline std::string gzip_member(const std::string& text, int level) {
+  z_stream zs{};
+  if (deflateInit2(&zs, level, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+    throw std::runtime_error("deflateInit2 failed");
+  std::string out(deflateBound(&zs, text.size()), '\0');
+  zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(text.data()));
+  zs.avail_in = text.size();
+  zs.next_out = reinterpret_cast<Bytef*>(&out[0]);
+  zs.avail_out = out.size();
+  const int rc = deflate(&zs, Z_FINISH);
+  out.resize(zs.total_out);
+  deflateEnd(&zs);
+  if (rc != Z_STREAM_END) throw std::runtime_error("deflate failed");
+  return out;
+}
 inline void write_matrix(const std::string& fn, const double* A, size_t rows, int K, bool gz = false) {
-  std::string buf;
-  char v[32];
-  if (gz) {
-    gzFile fp = gzopen(fn.c_str(), "wb6");
-    if (!fp) throw std::runtime_error("cannot write " + fn);
-    for (size_t r = 0; r < rows; r++) {
-      buf.clear();
-      for (int k = 0; k < K; k++) {
-        std::snprintf(v, sizeof v, "%.6f%c", A[r * K + k], k + 1 == K ? '\n' : ' ');
-        buf += v;
-      }
-      gzwrite(fp, buf.data(), buf.size());
-    }
-    gzclose(fp);
-    return;
-  }
-  FILE* fp = std::fopen(fn.c_str(), "w");
+  FILE* fp = std::fopen(fn.c_str(), "wb");
   if (!fp) throw std::runtime_error("cannot write " + fn);
-  for (size_t r = 0; r < rows; r++)
-    for (int k = 0; k < K; k++) std::fprintf(fp, "%.6f%c", A[r * K + k], k + 1 == K ? '\n' : ' ');
-  std::fclose(fp);
+  const size_t CH = 2048, nch = (rows + CH - 1) / CH, BATCH = 256;  // rows per chunk; chunks held in memory
+  std::vector<std::string> out(std::min(nch, BATCH));
+  bool ok = true;
+  for (size_t c0 = 0; c0 < nch; c0 += BATCH) {
+    const size_t cn = std::min(BATCH, nch - c0);
+#pragma omp parallel for schedule(dynamic, 1)
+    for (size_t c = 0; c < cn; c++) {
+      std::string buf;
+      char v[32];
+      const size_t r0 = (c0 + c) * CH, r1 = std::min(rows, r0 + CH);
+      for (size_t r = r0; r < r1; r++)
+        for (int k = 0; k < K; k++) {
+          const int len = std::snprintf(v, sizeof v, "%.6f%c", A[r * K + k], k + 1 == K ? '\n' : ' ');
+          buf.append(v, len);
+        }
+      out[c] = gz ? gzip_member(buf, 6) : std::move(buf);
+    }
+    for (size_t c = 0; c < cn; c++) ok = ok && std::fwrite(out[c].data(), 1, out[c].size(), fp) == out[c].size();
+  }
+  ok = std::fclose(fp) == 0 && ok;
+  if (!ok) throw std::runtime_error("error writing " + fn);
 }

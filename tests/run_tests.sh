@@ -109,6 +109,10 @@ read -r qmax qms qrmse < <("$ROOT/tests/qdist" plink.3.Q sim.true.Q 3)
 ok "plink: Q close to the truth (RMSE < 0.05)" "a < 0.05" "$qrmse"
 run plink_rep sim.bed 3 -s 1
 ok "plink: same seed gives the same Q" "a == 0" "$(cmp -s plink.3.Q plink_rep.3.Q; echo $?)"
+run plink_noP sim.bed 3 -s 1 --no-P --no-evaladmix
+ok "plink --no-P: no P file, same Q" "a == 0" "$( [ ! -e plink_noP.3.P.gz ] && [ ! -e plink_noP.3.P ] && cmp -s plink.3.Q plink_noP.3.Q; echo $?)"
+run plink_plain sim.bed 3 -s 1 --no-gzip --no-evaladmix
+ok "plink: P.gz (one gzip member per chunk of rows) = --no-gzip text" "a == 0" "$(zcat plink.3.P.gz | cmp -s - plink_plain.3.P; echo $?)"
 run plink_j1 sim.bed 3 -s 1 -j1
 ok "plink: 1 thread gives the same optimum (|dll| < 1e-3)" "a < 1e-3 && a > -1e-3" \
   "$(awk -v a="$(ll_of plink_j1.3.log)" -v b="$(ll_of plink.3.log)" 'BEGIN{print a-b}')"

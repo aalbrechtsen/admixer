@@ -42,6 +42,7 @@ static void usage(int code) {
       "  -C=X, -C X          stop when the log-likelihood improves by less than X (default 1e-4)\n"
       "  -o NAME, --out=NAME output prefix NAME instead of inputBasename\n"
       "  --no-gzip           write NAME.K.P uncompressed instead of NAME.K.P.gz\n"
+      "  --no-P              do not write the P matrix (e.g. for benchmarks)\n"
       "  --supervised        supervised analysis: reads inputBasename.pop (one line per individual,\n"
       "                      a population name, or '-' if unknown); labelled individuals are held at\n"
       "                      their population; K must equal the number of population names\n"
@@ -85,7 +86,7 @@ struct Options {
   double conv_thres = 0.01, bound = -1;  // bound < 0: the data type's default
   int prime = -1, minibatch = -1;        // < 0: the data type's default
   std::string input, prefix, out, hess = "exact";
-  bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true;
+  bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true, write_P = true;
 };
 
 static bool is_beagle(const std::string& f) { return !ends_with(f, ".bed"); }
@@ -238,10 +239,12 @@ static void analyse(Data& D, Options& o, double t0) {
   say("Writing output files.\n");
   const std::string pre = o.out + "." + std::to_string(K);
   write_matrix(pre + ".Q", x.data() + m.nP, D.N, K);
-  std::vector<double> Pout(m.nP);
-  for (int j = 0; j < D.M; j++)
-    std::copy(x.begin() + (size_t)j * K, x.begin() + (size_t)(j + 1) * K, Pout.begin() + (size_t)perm[j] * K);
-  write_matrix(pre + (o.gz ? ".P.gz" : ".P"), Pout.data(), D.M, K, o.gz);
+  if (o.write_P) {
+    std::vector<double> Pout(m.nP);
+    for (int j = 0; j < D.M; j++)
+      std::copy(x.begin() + (size_t)j * K, x.begin() + (size_t)(j + 1) * K, Pout.begin() + (size_t)perm[j] * K);
+    write_matrix(pre + (o.gz ? ".P.gz" : ".P"), Pout.data(), D.M, K, o.gz);
+  }
   if (o.evaladmix && D.N > 20000 && !o.evaladmix_forced) {
     say("evalAdmix skipped: %d individuals would need ~%.0f GB of memory (use --evaladmix to force)\n", D.N,
         48.0 * D.N * D.N / 1e9);
@@ -273,6 +276,7 @@ int main(int argc, char** argv) {
     else if (s == "--evaladmix") o.evaladmix = o.evaladmix_forced = true;
     else if (s == "--no-evaladmix") o.evaladmix = false;
     else if (s == "--no-gzip") o.gz = false;
+    else if (s == "--no-P") o.write_P = false;
     else if (s == "--keep-missing") o.glf.skip_missing = false;
     else if (s.rfind("--conv_thres", 0) == 0) o.conv_thres = std::atof(opt_value(argc, argv, a, "--conv_thres").c_str());
     else if (s.rfind("--conv", 0) == 0) o.conv = std::atoi(opt_value(argc, argv, a, "--conv").c_str());
