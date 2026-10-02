@@ -93,6 +93,7 @@ extension (`data`) as prefix:
 | `-C=X`, `-C X` | stop when the log-likelihood improves by less than X (default 1e-4) |
 | `-o NAME` | output prefix `NAME` instead of `data` |
 | `--no-gzip` | write the P matrix uncompressed (`NAME.K.P`) |
+| `--no-P` | do not write the P matrix (e.g. for benchmarks) |
 | `--supervised` | supervised analysis; reads `data.pop` (one line per individual: a population name, or `-` if unknown). Labelled individuals are held at their population; K must equal the number of population names, and columns follow the order of first appearance in `data.pop` |
 | `-P` | projection; reads `data.K.P.in` (or `data.K.P.in.gz`) and estimates Q with P held fixed |
 | `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
