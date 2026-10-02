@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <map>
 #include <numeric>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -93,10 +95,32 @@ struct Options {
   int prime = -1, minibatch = -1;        // < 0: the data type's default
   std::string input, prefix, out, hess = "exact";
   bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true, write_P = true;
-  bool smallk = true;  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
+  bool smallk = true;
+  std::string thread_note;  // why -j was capped, or that it exceeds the physical cores (printed in the log)  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
 
 static bool is_beagle(const std::string& f) { return !ends_with(f, ".bed"); }
+
+// The number of threads OpenBLAS was compiled for (MAX_THREADS in its configuration string; 0 if unknown).
+// The pthread builds of OpenBLAS 0.3.20 shipped with Ubuntu (MAX_THREADS=64) crash when more OpenMP threads than
+// that call it at the same time, even single-threaded; the static release build uses NUM_THREADS=256.
+static int openblas_max_threads() {
+  const char* c = openblas_get_config();
+  const char* p = c ? std::strstr(c, "MAX_THREADS=") : nullptr;
+  return p ? std::atoi(p + 12) : 0;
+}
+// Physical cores of the machine (distinct package/core ids in /sys; 0 if unknown).
+static int physical_cores() {
+  std::set<std::pair<int, int>> cores;
+  for (int c = 0;; c++) {  // cpu0, cpu1, ... until the first missing one
+    const std::string d = "/sys/devices/system/cpu/cpu" + std::to_string(c) + "/topology/";
+    std::ifstream fp(d + "physical_package_id"), fc(d + "core_id");
+    int pk, co;
+    if (!(fp >> pk) || !(fc >> co)) break;
+    cores.insert({pk, co});
+  }
+  return (int)cores.size();
+}
 // input path without its extension: data.bed -> data, data.beagle.gz -> data, data.gz -> data
 static std::string input_prefix(const std::string& f) {
   std::string p = f;
@@ -128,6 +152,7 @@ static void analyse(Data& D, Options& o, double t0) {
   say("Point estimation will terminate when objective function delta < %g\n", fs.tol);
   say(gl ? "Size of GL data: %dx%d\n" : "Size of G: %dx%d\n", D.N, D.M);
   say("Threads: %d\n", o.threads);
+  if (!o.thread_note.empty()) say("%s", o.thread_note.c_str());
 
   // Supervised mode: population labels from inputBasename.pop, columns in order of first appearance
   std::vector<int> label(D.N, -1);
@@ -349,6 +374,14 @@ int main(int argc, char** argv) {
   // (bounds 1e-9, so weights up to ~1e18 next to O(1) ones) the rounded Hessians led runs to other, worse
   // optima on the NGSadmix tutorial data, and the gain at small K is small.
   if (fs.hess_float < 0) fs.hess_float = !gl && o.K >= FitSettings::HESS_FLOAT_MIN_K;
+  if (const int mx = openblas_max_threads(); mx > 0 && o.threads > mx) {
+    o.thread_note = "Note: -j " + std::to_string(o.threads) + " reduced to " + std::to_string(mx) +
+                    ", the number of threads this OpenBLAS library was built for\n";
+    o.threads = mx;
+  }
+  if (const int pc = physical_cores(); pc > 0 && o.threads > pc)
+    o.thread_note += "Note: " + std::to_string(o.threads) + " threads on " + std::to_string(pc) +
+                     " physical cores; one thread per core is usually faster\n";
   omp_set_num_threads(o.threads);
   const std::string logname = o.out + "." + std::to_string(o.K) + ".log";
   log_file() = std::fopen(logname.c_str(), "w");

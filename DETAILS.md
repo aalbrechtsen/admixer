@@ -125,6 +125,10 @@ H = P Qᵀ (BLAS), the per-entry likelihood terms, and the Hessians and gradient
 * With 20,000 SNPs × 2,000 individuals and 8 threads, a run is 90–116× faster than ADMIXTURE 1.3.0 (K = 5–20).
   The October 2026 kernels made a run 1.7–3.2× faster than admixer 0.2.1 (M = 100k, N = 2k, K = 5–20,
   8 threads), with the same iterates.
+* **Threads:** the passes scale up to the number of physical cores (3.0–3.7× from 8 to 44 threads at M = 100,000,
+  N = 2,000); more threads than cores (hyper-threads) make runs slower, and the log says so. OpenBLAS libraries
+  built for fewer threads than requested (the Ubuntu 22.04 package: 64) crash when more OpenMP threads call them,
+  so `-j` is reduced to that limit, with a note in the log; the static release binary allows 256.
 * Faster solvers for larger K were tried in October 2026 (warm-started QPs, reused Hessians, sparse Hessians
   for components with Q ≈ 0). They gave up to 15 % with few individuals and nothing at large N, so they were not
   adopted.
