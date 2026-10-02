@@ -91,6 +91,9 @@ H = P Qᵀ (BLAS), the per-entry likelihood terms, and the Hessians and gradient
 * With 20,000 SNPs × 2,000 individuals and 8 threads, a run is 90–116× faster than ADMIXTURE 1.3.0 (K = 5–20).
   The October 2026 kernels made a run 1.7–3.2× faster than admixer 0.2.1 (M = 100k, N = 2k, K = 5–20,
   8 threads), with the same iterates.
+* Faster solvers for larger K were tried in October 2026 (warm-started QPs, reused Hessians, sparse Hessians
+  for components with Q ≈ 0). They gave up to 15 % with few individuals and nothing at large N, so they were not
+  adopted.
 
 Measurements, profiles and what was tried: [`bench/perf_results.md`](bench/perf_results.md). Kernel profiler:
 `make tools/prof_kernels; tools/prof_kernels data.bed K threads` (also for `.beagle.gz`).
