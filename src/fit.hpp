@@ -87,6 +87,23 @@ class Fitter {
     if (verbose) say("%d (%s) \tElapsed: %.3f\tLoglikelihood: %.6f\t(delta): %g\n", it, what, omp_get_wtime() - t0, ll,
                 delta);
   }
+  // xq = x1 + sum_a c_a V_a. Kept out of line: GCC 11 at -O3 -march=native (AVX2) miscompiled qn() when this
+  // OpenMP loop was inlined there (basic-block vectorisation around the parallel region turned the
+  // log-likelihood change ll - prev into -ll, so the stopping rule never fired).
+  [[gnu::noinline]] static void extrapolate(const Vec& x1, const std::vector<Vec>& V, const std::vector<double>& c,
+                                            Vec& xq) {
+    const size_t n = x1.size();
+    const int h = c.size();
+    const double* x1p = x1.data();
+    const double* cp = c.data();
+    double* xp = xq.data();
+#pragma omp parallel for schedule(static)
+    for (size_t t = 0; t < n; t++) {
+      double s = x1p[t];
+      for (int a = 0; a < h; a++) s += V[a][t] * cp[a];
+      xp[t] = s;
+    }
+  }
   // dot product with a fixed summation order (blocks of 4096, added in order): reproducible for any schedule
   static double dot(const Vec& a, const Vec& b) {
     const size_t n = a.size(), bs = 4096, nb = (n + bs - 1) / bs;
@@ -173,10 +190,7 @@ class Fitter {
       }
       bool accepted = false;
       if (solve_linear(h, A.data(), c.data())) {
-        xq = x1;
-#pragma omp parallel for schedule(static)
-        for (size_t t = 0; t < n; t++)
-          for (int a = 0; a < h; a++) xq[t] += V[a][t] * c[a];
+        extrapolate(x1, V, c, xq);
         m_.project(xq.data());
         m_.restore_fixed(xq.data(), x1.data());
         const double llq = half_P(xq, y);
