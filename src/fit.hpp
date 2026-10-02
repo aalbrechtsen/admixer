@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <numeric>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "log.hpp"
@@ -22,6 +23,8 @@ struct FitSettings {
   double tol = 1e-4;     // -C: stop when the log-likelihood improves by less than this per iteration
   int max_iter = 10000;  // quasi-Newton iterations at most
   int qn_secants = 3;    // quasi-Newton secant pairs (as ADMIXTURE)
+  int qn_damp = 1;       // after a rejected extrapolation, retry up to this many times with the step scaled by
+  double qn_damp_factor = 0.5;  // this factor before falling back to F(F(x)) (0 = ADMIXTURE's rule)
   int prime = 5;         // EM steps before the main algorithm (as ADMIXTURE)
   int minibatch = 32;    // initial number of SNP mini-batches in the warm-up (0 = no warm-up)
   int mb_max_epochs = 100;
@@ -31,6 +34,8 @@ struct FitSettings {
 struct FitResult {
   double loglik = 0;
   int iterations = 0;
+  int rejected = 0;  // iterations whose extrapolation (also after damping) lost to F(x)
+  int damped = 0;    // iterations whose extrapolation was accepted after damping
   double seconds = 0;
 };
 
@@ -155,7 +160,9 @@ class Fitter {
   // Quasi-Newton acceleration of the block-relaxation map F (Zhou, Alexander & Lange 2011):
   //   x_new = F(x) + V (U'U - U'V)^{-1} U'u,  u = F(x) - x,
   // with U, V the last q secant pairs. The extrapolated point is projected back onto the constraints
-  // and accepted only if it beats F(x); otherwise F(F(x)) is used.
+  // and accepted only if it beats F(x); otherwise F(F(x)) is used. With qn_damp > 0, a rejected extrapolation
+  // is first retried with the step x_new - F(x) scaled by qn_damp_factor (up to qn_damp times): on hard data
+  // most full extrapolations overshoot, and a shorter one still beats F(x) and keeps the acceleration going.
   // F = Q step after P step, and the P step returns log L of its input. So log L of the new x is not a
   // separate pass: the P step of the next F(x) is taken at once (for an extrapolated point, before
   // deciding whether to accept it; a rejected point wastes that P step instead of a log L pass).
@@ -172,6 +179,7 @@ class Fitter {
       }
       return m_.sqp_P(a.data() + nP, a.data(), b.data()) + off_;
     };
+    FitResult r;
     double prev = -INFINITY, ll = half_P(x, x1);  // ll = log L(x); x1 holds the P part of F(x)
     int it;
     for (it = 1; it <= s_.max_iter; it++) {
@@ -190,17 +198,23 @@ class Fitter {
       }
       bool accepted = false;
       if (solve_linear(h, A.data(), c.data())) {
-        extrapolate(x1, V, c, xq);
-        m_.project(xq.data());
-        m_.restore_fixed(xq.data(), x1.data());
-        const double llq = half_P(xq, y);
-        if ((accepted = llq > ll1)) {
-          x.swap(xq);
-          x1.swap(y);
-          ll = llq;
+        for (int d = 0; d <= s_.qn_damp && !accepted; d++) {
+          if (d > 0)
+            for (double& ca : c) ca *= s_.qn_damp_factor;
+          extrapolate(x1, V, c, xq);
+          m_.project(xq.data());
+          m_.restore_fixed(xq.data(), x1.data());
+          const double llq = half_P(xq, y);
+          if ((accepted = llq > ll1)) {
+            x.swap(xq);
+            x1.swap(y);
+            ll = llq;
+            if (d > 0) r.damped++;
+          }
         }
       }
       if (!accepted) {
+        r.rejected++;
         x.swap(x2);
         ll = half_P(x, x1);
       }
@@ -208,9 +222,11 @@ class Fitter {
       if (std::fabs(ll - prev) < s_.tol) break;
       prev = ll;
     }
-    FitResult r;
     r.loglik = ll;
     r.iterations = std::min(it, s_.max_iter);
+    if (verbose)
+      say("Quasi-Newton: %d of %d extrapolations rejected%s\n", r.rejected, r.iterations,
+          s_.qn_damp > 0 ? (", " + std::to_string(r.damped) + " accepted after damping").c_str() : "");
     return r;
   }
 };

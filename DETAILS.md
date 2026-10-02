@@ -13,6 +13,16 @@ testing and the differences from ADMIXTURE and NGSadmix.
 4. Then it runs ADMIXTURE's block relaxation until the log-likelihood improves by less than `-C`. Each
    iteration takes one Newton/QP step for every row of P and then for every row of Q, accelerated by
    quasi-Newton extrapolation with 3 secant pairs.
+5. **Damped extrapolation** (`--qn-damp`, default 1). ADMIXTURE discards an extrapolated point that does not beat
+   F(x) and continues from F(F(x)). On hard, multimodal data this happens in 36–90 % of the iterations, and the
+   run crawls. admixer first retries the extrapolation with half the step (`--qn-damp-factor`, default 0.5) and
+   discards it only if that also fails. When no extrapolation is rejected (most data), the run is unchanged.
+   * Hard simulated data (14 sets, M = 10,000–100,000, N = 600–2,000, K = 6–12, 5–10 seeds each): 1.2–4.2× faster
+     where extrapolations were rejected (the more rejections, the larger the gain), identical where none were.
+     Every seed reached the same optimum as without damping, or a higher one.
+   * Genotype likelihoods (NGSadmix tutorial data, K = 3–6; simulated GLs, M = 10,000, N = 2,000): the same optimum
+     for every seed, 11 % less time in total (per data set and K from 2 % slower to 1.8× faster).
+   * `--qn-damp=0` restores ADMIXTURE's rule.
 
 The parameter bounds and the stopping rule are those of ADMIXTURE.
 
@@ -76,7 +86,9 @@ Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... unti
 
 Mainly for benchmarking: `--bound=X` (P in [X, 1 − X] and Q ≥ X; default 1e-5 for genotypes as ADMIXTURE,
 1e-9 for GLs as NGSadmix), `--prime=X` (EM steps before the main algorithm), `--minibatch=X` (initial number
-of mini-batches of the warm-up), `--hess=exact|em` (curvature of the Newton steps for GLs) and `--max-iter=X`.
+of mini-batches of the warm-up), `--hess=exact|em` (curvature of the Newton steps for GLs), `--qn-damp=X` and
+`--qn-damp-factor=F` (retries of a rejected quasi-Newton extrapolation with the step scaled by F; default 1 and
+0.5, 0 = ADMIXTURE's rule) and `--max-iter=X`.
 
 ## Performance
 
@@ -145,8 +157,9 @@ reads are Poisson, with a sequencing error rate.
 ## Differences from ADMIXTURE and NGSadmix
 
 **ADMIXTURE:**
-* Same model, likelihood, parameter bounds, algorithm and stopping rule. Different start: random P,
-  near-uniform Q, 5 EM steps, then a mini-batch warm-up.
+* Same model, likelihood, parameter bounds and stopping rule. Same algorithm, except that a rejected
+  quasi-Newton extrapolation is retried once with half the step (`--qn-damp=0`: ADMIXTURE's rule). Different
+  start: random P, near-uniform Q, 5 EM steps, then a mini-batch warm-up.
 * Not implemented: cross-validation (`--cv`), bootstrap standard errors (`-B`), penalised estimation
   (`-l`), haploid data, the EM method and the Fst printout. `-m` is admixer's maximum number of runs, not
   ADMIXTURE's method option.

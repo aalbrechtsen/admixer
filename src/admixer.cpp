@@ -66,6 +66,8 @@ static void usage(int code) {
       "  --prime=X           EM steps before the main algorithm (default 5 for genotypes, 0 for GLs)\n"
       "  --minibatch=X       initial number of mini-batches of the warm-up (default 32 for genotypes, 0 = off for GLs)\n"
       "  --hess=exact|em     GLs: curvature of the Newton steps (default exact; em = ADMIXTURE's EM-type weight)\n"
+      "  --qn-damp=X         retry a rejected quasi-Newton extrapolation up to X times with the step scaled by\n"
+      "                      --qn-damp-factor (default X = 1, factor 0.5; X = 0: ADMIXTURE's rule, F(F(x)) at once)\n"
       "  -h, --help          this help\n",
       VERSION);
   std::exit(code);
@@ -110,7 +112,9 @@ static void analyse(Data& D, Options& o, double t0) {
         "likelihood, BLAS kernels)\n", o.hess == "em" ? "EM-type" : "exact");
   else
     say("Point estimation method: Block relaxation algorithm (Newton/QP steps, BLAS kernels)\n");
-  say("Convergence acceleration algorithm: QuasiNewton, %d secant conditions\n", fs.qn_secants);
+  say("Convergence acceleration algorithm: QuasiNewton, %d secant conditions", fs.qn_secants);
+  if (fs.qn_damp > 0) say(", rejected extrapolations retried %dx with the step scaled by %g", fs.qn_damp, fs.qn_damp_factor);
+  say("\n");
   say("Point estimation will terminate when objective function delta < %g\n", fs.tol);
   say(gl ? "Size of GL data: %dx%d\n" : "Size of G: %dx%d\n", D.N, D.M);
   say("Threads: %d\n", o.threads);
@@ -289,6 +293,9 @@ int main(int argc, char** argv) {
     else if (s.rfind("--prime", 0) == 0) o.prime = std::atoi(opt_value(argc, argv, a, "--prime").c_str());
     else if (s.rfind("--minibatch", 0) == 0) o.minibatch = std::atoi(opt_value(argc, argv, a, "--minibatch").c_str());
     else if (s.rfind("--hess", 0) == 0) o.hess = opt_value(argc, argv, a, "--hess");
+    else if (s.rfind("--qn-damp-factor", 0) == 0)
+      fs.qn_damp_factor = std::atof(opt_value(argc, argv, a, "--qn-damp-factor").c_str());
+    else if (s.rfind("--qn-damp", 0) == 0) fs.qn_damp = std::atoi(opt_value(argc, argv, a, "--qn-damp").c_str());
     else if (s.rfind("-m", 0) == 0) o.max_runs = std::atoi(opt_value(argc, argv, a, "-m").c_str());
     else if (s == "-P") o.projection = true;
     else if (s.rfind("-j", 0) == 0) o.threads = std::atoi(opt_value(argc, argv, a, "-j").c_str());
@@ -303,7 +310,9 @@ int main(int argc, char** argv) {
   if (pos.size() != 2) usage(1);
   o.input = pos[0];
   o.K = std::atoi(pos[1].c_str());
-  if (o.K < 1 || o.threads < 1 || o.conv < 0 || o.max_runs < 1 || (o.hess != "exact" && o.hess != "em")) usage(1);
+  if (o.K < 1 || o.threads < 1 || o.conv < 0 || o.max_runs < 1 || (o.hess != "exact" && o.hess != "em") ||
+      fs.qn_damp < 0 || !(fs.qn_damp_factor > 0 && fs.qn_damp_factor < 1))
+    usage(1);
   fs.seed = seed_s == "time" ? (unsigned long)std::time(nullptr) : std::strtoul(seed_s.c_str(), nullptr, 10);
   const bool gl = is_beagle(o.input);
   o.prefix = gl ? input_prefix(o.input) : strip_extension(o.input);

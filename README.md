@@ -126,7 +126,8 @@ Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... unti
 
 * **Called genotypes:** ADMIXTURE's model and algorithm. From a random P and near-uniform Q, it takes 5 EM steps,
   then a mini-batch warm-up on SNP batches. Then it runs block relaxation with one Newton/QP step per row of P
-  and of Q, accelerated by quasi-Newton extrapolation. ADMIXTURE's bounds and stopping rule apply.
+  and of Q, accelerated by quasi-Newton extrapolation; an extrapolation that does not improve the likelihood is
+  retried once with half the step before it is discarded. ADMIXTURE's bounds and stopping rule apply.
 * **Genotype likelihoods:** NGSadmix's model, with the same block relaxation, using the exact curvature in the
   Newton steps. NGSadmix's filters and bounds apply, and missing GLs are left out.
 * **Implementation:** every pass works on tiles of SNPs × individuals with BLAS matrix products and vectorised
