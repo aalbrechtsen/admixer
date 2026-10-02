@@ -91,9 +91,9 @@ inline void chol_solve_ld(int n, const double* U, int ld, double* b) {
 // from the primal infeasibility and the multipliers mu = (H + ridge) d - g; many bounds can change per
 // iteration. It stops at an exact KKT point (unique solution) or returns false after maxit iterations or
 // if a subsystem is not positive definite; the caller then uses the primal active-set method.
+// state holds the initial guess of the active set on entry.
 inline bool qp_box_pdas(int n, const double* H, const double* g, const double* lo, const double* hi, double ridge,
                         double mtol, double* d, int* state, int* fr, double* A, double* b, int maxit = 8) {
-  for (int i = 0; i < n; i++) state[i] = 0;
   for (int it = 0; it < maxit; it++) {
     int nf = 0;
     for (int i = 0; i < n; i++) {
@@ -157,7 +157,14 @@ inline void qp_active_set(int n, const double* H, const double* g, const double*
   double* const b = A + (size_t)(n + 1) * (n + 1);
   double* const v = b + n + 1;
   double* const r = v + n;
-  if (!eq && qp_box_pdas(n, H, g, lo, hi, ridge, mtol, d, state, fr, A, b)) return;
+  if (!eq) {
+    // Warm start: the variables at a bound whose gradient points out of the box start as active. Near
+    // convergence this is usually the final active set (rows of P often have a third of their entries at a
+    // bound), so one factorisation of the free block suffices instead of two.
+    for (int i = 0; i < n; i++)
+      state[i] = lo[i] >= 0 && g[i] <= 0 ? -1 : hi[i] <= 0 && g[i] >= 0 ? 1 : 0;
+    if (qp_box_pdas(n, H, g, lo, hi, ridge, mtol, d, state, fr, A, b)) return;
+  }
   for (int i = 0; i < n; i++) state[i] = 0;
   for (int i = 0; i < n; i++) {
     d[i] = 0;
