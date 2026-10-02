@@ -24,7 +24,7 @@
 #include "model.hpp"
 #include "multistart.hpp"
 
-static const char* VERSION = "0.2.3";
+static const char* VERSION = "0.2.4";
 
 static void usage(int code) {
   std::printf(
