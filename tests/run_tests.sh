@@ -103,6 +103,12 @@ ok "plink: exit code 0" "a == 0" "$(cat plink.rc)"
 refcheck plink plink.3.log
 read -r kp kq < <(kkt_of plink.3.log)
 ok "plink: KKT P < 1e-3" "a < 1e-3" "$kp"; ok "plink: KKT Q < 1e-5" "a < 1e-5" "$kq"
+# the stopping rule: the run ends on a change below -C (1e-4), and no change is of the size of log L itself
+# (GCC 11 -O3 -march=native once miscompiled ll - prev into -ll, so the rule never fired)
+ok "plink: last log-likelihood change < -C (1e-4)" "a < 1e-4 && a > -1e-4" \
+  "$(grep 'QN/Block' plink.3.log | tail -1 | sed 's/.*(delta): //')"
+ok "plink: no log-likelihood change of the size of log L" "a == 0" \
+  "$(grep 'QN/Block' plink.3.log | awk -F'\t' 'NR > 1 {split($3, l, " "); split($4, d, " "); if (d[2] > 0.01 * -l[2]) n++} END{print n+0}')"
 formats plink 3 200 4000
 ok "plink: evalAdmix correlations 200 x 200" "a == 40000" "$(awk '{n+=NF} END{print n}' plink.3.corres.txt)"
 read -r qmax qms qrmse < <("$ROOT/tests/qdist" plink.3.Q sim.true.Q 3)
