@@ -133,6 +133,10 @@ H = P Qᵀ (BLAS), the per-entry likelihood terms, and the Hessians and gradient
   N = 2,000); more threads than cores (hyper-threads) make runs slower, and the log says so. OpenBLAS libraries
   built for fewer threads than requested (the Ubuntu 22.04 package: 64) crash when more OpenMP threads call them,
   so `-j` is reduced to that limit, with a note in the log; the static release binary allows 256.
+* **Warm-up batches:** the mini-batch warm-up calls the P and Q steps once per SNP batch (up to 32 per epoch).
+  Their work buffers are kept between calls, and P tiles get smaller (down to 32 SNPs) when a batch has too
+  few for the threads (0.2.7). Same results; at N = 50,000 or M = 500,000 with 44 threads the warm-up is up
+  to 9 % and a run up to 6 % shorter.
 * Faster solvers for larger K were tried in October 2026 (warm-started QPs, reused Hessians, sparse Hessians
   for components with Q ≈ 0). They gave up to 15 % with few individuals and nothing at large N, so they were not
   adopted.
