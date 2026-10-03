@@ -112,7 +112,11 @@ H = P Qᵀ (BLAS), the per-entry likelihood terms, and the Hessians and gradient
 * The matrix products are a small part of the time; the per-entry step dominates. It is written without
   branches on the genotype (they were mispredicted about every other entry), so the compiler vectorises it.
   It uses one division per entry and tracks the exponent of the likelihood product exactly instead of taking
-  logs.
+  logs. GCC vectorises it only with `-fno-trapping-math` (always added by the Makefile): otherwise it turns
+  selects such as `obs ? 2 - g : 0` into branches around the arithmetic, and without AVX-512's masked
+  instructions the loop then stays scalar. Up to version 0.2.5 that happened on AVX2 CPUs: the flag made runs
+  15–30 % faster there for K = 5–20 (M = 100,000, N = 2,000, 8 threads) with bit-identical results, and the
+  per-entry step 1.6–2.1× faster. AVX-512 code was vectorised already (with masked instructions).
 * The small Newton/QP problems per row of P and Q use a Cholesky-based active-set solver; rows of P (box
   constraints only) first try a primal-dual active-set method, which moves many bounds per iteration.
 * **Small K (2–7):** OpenBLAS's matrix products are inefficient when the inner dimension is only K (or
@@ -143,10 +147,13 @@ manylinux_2_28 container (glibc 2.28, GCC 14). OpenBLAS (with `DYNAMIC_ARCH`, so
 the CPU at run time) and zlib are built from source once into `.build/` and linked statically, as are
 libstdc++, libgcc and libgomp; the script fails if the binary needs any shared library besides glibc.
 The code is compiled for x86-64-v2, and the per-entry tile kernels (`tile_ll`, `tile_em`, `tile_wd` in
-`io.hpp` and `beagle.hpp`) also for AVX-512 (`ADMIXER_KERNEL` in `kernel.hpp`, GCC `target_clones`); the
+`io.hpp` and `beagle.hpp`) also for AVX2 and AVX-512 (`ADMIXER_KERNEL` in `kernel.hpp`, GCC `target_clones`); the
 version is chosen when the program starts. Without the AVX-512 kernels the binary was about 2× slower on
 an AVX-512 CPU; with them it is as fast as a `-march=native` build (20,000 SNPs, 2,000 individuals, 16
-threads, Xeon Gold 6152: K = 5 2.7 s vs 2.7 s, K = 10 196 s vs 203 s, same log-likelihoods). To release:
+threads, Xeon Gold 6152: K = 5 2.7 s vs 2.7 s, K = 10 196 s vs 203 s, same log-likelihoods). On an AVX2 CPU
+(Xeon E5-2699 v4, M = 100,000, N = 2,000, 8 threads) the AVX2 kernels and `-fno-trapping-math` (0.2.6) made it
+1.7–2.1× faster than the 0.2.5 build, as fast as a `-march=native` build (K = 5 20.0 s vs 20.8 s, K = 10
+31.9 s vs 32.3 s). To release:
 run the script, run `tests/run_tests.sh --bin admixer`, and attach the tarball to a GitHub release.
 
 ## Testing

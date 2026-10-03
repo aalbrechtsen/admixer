@@ -7,7 +7,7 @@ Timings of the comparison programs, kept so that they do not have to be rerun. E
 | `admixture_1.3.0.tsv` | ADMIXTURE 1.3.0 (`admixture -jT -s SEED data.bed K`), all runs measured so far |
 | `admixture_per_iteration.tsv` | time of one EM step and one quasi-Newton iteration by number of threads, ADMIXTURE vs admixer |
 | `ngsadmix32.tsv` | NGSadmix 32 (`NGSadmix -likes input.gz -K K -P 8 -seed SEED`) on the NGSadmix tutorial GLs, 25 seeds per K = 3-6 |
-| `admixer_readme_runs.tsv` | admixer 0.2.1 (`30f49d6`) and 0.2.2 on the README examples, same server and conditions |
+| `admixer_readme_runs.tsv` | admixer 0.2.1 (`30f49d6`) to 0.2.6 on the README examples, same server and conditions |
 | `logs_e5-2699v4.tar.gz` | the raw logs of the e5-2699v4 runs |
 
 Columns: `server`, `data`, `M` (SNPs), `N` (individuals), `K`, `threads`, `seed`, `wall_s`, `cpu_s` (empty when not

@@ -23,8 +23,8 @@ Details beyond everyday use (algorithms, performance, testing, differences from 
 ### Prebuilt binary (Linux x86_64)
 
 Nothing else needs to be installed: OpenBLAS, zlib and the C++/OpenMP runtimes are built in. It runs on any
-x86_64 Linux with glibc 2.28 or newer (RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 10+), and uses AVX-512
-when the CPU has it.
+x86_64 Linux with glibc 2.28 or newer (RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 10+), and uses AVX2 or
+AVX-512 when the CPU has it.
 
 ```
 wget https://github.com/aalbrechtsen/admixer/releases/latest/download/admixer-linux-x86_64.tar.gz
@@ -140,8 +140,8 @@ Details: [DETAILS.md](DETAILS.md) (algorithms, performance, testing, and the dif
 
 ## Example: blue wildebeest (PLINK), K = 7
 
-The times in both examples were measured with admixer 0.2.4 on one server (2 × Xeon E5-2699 v4, 44 cores,
-AVX2). The ADMIXTURE and NGSadmix runs used for the comparisons, from this server and an earlier one, are
+The times in both examples were measured with admixer 0.2.6 on one server (2 × Xeon E5-2699 v4, 44 cores,
+AVX2); the GL benchmark table with 0.2.4, which gives the same times as 0.2.6 there. The ADMIXTURE and NGSadmix runs used for the comparisons, from this server and an earlier one, are
 listed in [`bench/reference_runs/`](bench/reference_runs/).
 
 This example follows the popgenDK exercise
@@ -171,7 +171,7 @@ admixer --seed 1 -j10 -o blue_wildebeest_noLD_admixer blue_wildebeest_noLD.bed 7
 <summary>Full screen output = log file <code>blue_wildebeest_noLD_admixer.7.log</code> (click to expand)</summary>
 
 ```
-admixer 0.2.4
+admixer 0.2.6
 Command: admixer --seed 1 -j10 -o blue_wildebeest_noLD_admixer blue_wildebeest_noLD.bed 7
 Random seed: 1
 Point estimation method: Block relaxation algorithm (Newton/QP steps, BLAS kernels)
@@ -181,64 +181,64 @@ Point estimation will terminate when objective function delta < 0.0001
 Size of G: 73x37567
 Threads: 10
 Performing 5 EM steps to prime main algorithm
-1 (EM) 	Elapsed: 0.019	Loglikelihood: -3905731.572719	(delta): inf
-2 (EM) 	Elapsed: 0.033	Loglikelihood: -3589909.043398	(delta): 315823
-3 (EM) 	Elapsed: 0.046	Loglikelihood: -3575200.604387	(delta): 14708.4
-4 (EM) 	Elapsed: 0.059	Loglikelihood: -3574247.667174	(delta): 952.937
-5 (EM) 	Elapsed: 0.066	Loglikelihood: -3574138.765123	(delta): 108.902
+1 (EM) 	Elapsed: 0.018	Loglikelihood: -3905731.572719	(delta): inf
+2 (EM) 	Elapsed: 0.031	Loglikelihood: -3589909.043398	(delta): 315823
+3 (EM) 	Elapsed: 0.043	Loglikelihood: -3575200.604387	(delta): 14708.4
+4 (EM) 	Elapsed: 0.055	Loglikelihood: -3574247.667174	(delta): 952.937
+5 (EM) 	Elapsed: 0.061	Loglikelihood: -3574138.765123	(delta): 108.902
 Initial loglikelihood: -3574096.334450
-1 (mini-batch, 32 batches) 	Elapsed: 0.089	Loglikelihood: -3305128.521999	(delta): 268968
-2 (mini-batch, 32 batches) 	Elapsed: 0.108	Loglikelihood: -3093758.676591	(delta): 211370
-3 (mini-batch, 32 batches) 	Elapsed: 0.126	Loglikelihood: -3020493.145226	(delta): 73265.5
-4 (mini-batch, 32 batches) 	Elapsed: 0.145	Loglikelihood: -3005025.468828	(delta): 15467.7
-5 (mini-batch, 32 batches) 	Elapsed: 0.163	Loglikelihood: -2983492.604518	(delta): 21532.9
-6 (mini-batch, 32 batches) 	Elapsed: 0.181	Loglikelihood: -2970637.518166	(delta): 12855.1
-7 (mini-batch, 32 batches) 	Elapsed: 0.200	Loglikelihood: -2963043.082651	(delta): 7594.44
-8 (mini-batch, 32 batches) 	Elapsed: 0.218	Loglikelihood: -2955627.401695	(delta): 7415.68
-9 (mini-batch, 32 batches) 	Elapsed: 0.236	Loglikelihood: -2949074.319894	(delta): 6553.08
-10 (mini-batch, 32 batches) 	Elapsed: 0.254	Loglikelihood: -2945153.291869	(delta): 3921.03
-11 (mini-batch, 32 batches) 	Elapsed: 0.272	Loglikelihood: -2941630.583144	(delta): 3522.71
-12 (mini-batch, 32 batches) 	Elapsed: 0.291	Loglikelihood: -2940097.110484	(delta): 1533.47
-13 (mini-batch, 32 batches) 	Elapsed: 0.309	Loglikelihood: -2937886.236819	(delta): 2210.87
-14 (mini-batch, 32 batches) 	Elapsed: 0.327	Loglikelihood: -2936857.473163	(delta): 1028.76
-15 (mini-batch, 32 batches) 	Elapsed: 0.345	Loglikelihood: -2936705.528618	(delta): 151.945
-16 (mini-batch, 32 batches) 	Elapsed: 0.364	Loglikelihood: -2936839.315742	(delta): -133.787
-17 (mini-batch, 16 batches) 	Elapsed: 0.381	Loglikelihood: -2934505.434620	(delta): 2333.88
-18 (mini-batch, 16 batches) 	Elapsed: 0.399	Loglikelihood: -2934593.456450	(delta): -88.0218
-19 (mini-batch, 8 batches) 	Elapsed: 0.415	Loglikelihood: -2933738.627437	(delta): 854.829
-20 (mini-batch, 8 batches) 	Elapsed: 0.432	Loglikelihood: -2933552.673171	(delta): 185.954
-21 (mini-batch, 8 batches) 	Elapsed: 0.448	Loglikelihood: -2933570.207690	(delta): -17.5345
-22 (mini-batch, 4 batches) 	Elapsed: 0.463	Loglikelihood: -2933229.690093	(delta): 340.518
-23 (mini-batch, 4 batches) 	Elapsed: 0.479	Loglikelihood: -2933135.647354	(delta): 94.0427
-24 (mini-batch, 4 batches) 	Elapsed: 0.495	Loglikelihood: -2933145.977744	(delta): -10.3304
-25 (mini-batch, 2 batches) 	Elapsed: 0.510	Loglikelihood: -2933015.506707	(delta): 130.471
-26 (mini-batch, 2 batches) 	Elapsed: 0.525	Loglikelihood: -2933009.051346	(delta): 6.45536
-27 (mini-batch, 2 batches) 	Elapsed: 0.540	Loglikelihood: -2933005.262884	(delta): 3.78846
-28 (mini-batch, 2 batches) 	Elapsed: 0.556	Loglikelihood: -2933001.307338	(delta): 3.95555
-29 (mini-batch, 2 batches) 	Elapsed: 0.571	Loglikelihood: -2933000.262047	(delta): 1.04529
-30 (mini-batch, 2 batches) 	Elapsed: 0.586	Loglikelihood: -2932999.566725	(delta): 0.695322
-31 (mini-batch, 2 batches) 	Elapsed: 0.601	Loglikelihood: -2932999.375594	(delta): 0.191131
-32 (mini-batch, 2 batches) 	Elapsed: 0.616	Loglikelihood: -2932998.737526	(delta): 0.638068
-33 (mini-batch, 2 batches) 	Elapsed: 0.631	Loglikelihood: -2932998.786367	(delta): -0.0488406
+1 (mini-batch, 32 batches) 	Elapsed: 0.082	Loglikelihood: -3305128.521999	(delta): 268968
+2 (mini-batch, 32 batches) 	Elapsed: 0.099	Loglikelihood: -3093758.676591	(delta): 211370
+3 (mini-batch, 32 batches) 	Elapsed: 0.116	Loglikelihood: -3020493.145226	(delta): 73265.5
+4 (mini-batch, 32 batches) 	Elapsed: 0.133	Loglikelihood: -3005025.468828	(delta): 15467.7
+5 (mini-batch, 32 batches) 	Elapsed: 0.149	Loglikelihood: -2983492.604518	(delta): 21532.9
+6 (mini-batch, 32 batches) 	Elapsed: 0.166	Loglikelihood: -2970637.518166	(delta): 12855.1
+7 (mini-batch, 32 batches) 	Elapsed: 0.183	Loglikelihood: -2963043.082651	(delta): 7594.44
+8 (mini-batch, 32 batches) 	Elapsed: 0.199	Loglikelihood: -2955627.401695	(delta): 7415.68
+9 (mini-batch, 32 batches) 	Elapsed: 0.216	Loglikelihood: -2949074.319894	(delta): 6553.08
+10 (mini-batch, 32 batches) 	Elapsed: 0.232	Loglikelihood: -2945153.291869	(delta): 3921.03
+11 (mini-batch, 32 batches) 	Elapsed: 0.249	Loglikelihood: -2941630.583144	(delta): 3522.71
+12 (mini-batch, 32 batches) 	Elapsed: 0.265	Loglikelihood: -2940097.110484	(delta): 1533.47
+13 (mini-batch, 32 batches) 	Elapsed: 0.282	Loglikelihood: -2937886.236819	(delta): 2210.87
+14 (mini-batch, 32 batches) 	Elapsed: 0.299	Loglikelihood: -2936857.473163	(delta): 1028.76
+15 (mini-batch, 32 batches) 	Elapsed: 0.315	Loglikelihood: -2936705.528618	(delta): 151.945
+16 (mini-batch, 32 batches) 	Elapsed: 0.332	Loglikelihood: -2936839.315742	(delta): -133.787
+17 (mini-batch, 16 batches) 	Elapsed: 0.347	Loglikelihood: -2934505.434620	(delta): 2333.88
+18 (mini-batch, 16 batches) 	Elapsed: 0.362	Loglikelihood: -2934593.456450	(delta): -88.0218
+19 (mini-batch, 8 batches) 	Elapsed: 0.376	Loglikelihood: -2933738.627437	(delta): 854.829
+20 (mini-batch, 8 batches) 	Elapsed: 0.390	Loglikelihood: -2933552.673171	(delta): 185.954
+21 (mini-batch, 8 batches) 	Elapsed: 0.404	Loglikelihood: -2933570.207690	(delta): -17.5345
+22 (mini-batch, 4 batches) 	Elapsed: 0.418	Loglikelihood: -2933229.690093	(delta): 340.518
+23 (mini-batch, 4 batches) 	Elapsed: 0.431	Loglikelihood: -2933135.647354	(delta): 94.0427
+24 (mini-batch, 4 batches) 	Elapsed: 0.444	Loglikelihood: -2933145.977744	(delta): -10.3304
+25 (mini-batch, 2 batches) 	Elapsed: 0.457	Loglikelihood: -2933015.506707	(delta): 130.471
+26 (mini-batch, 2 batches) 	Elapsed: 0.470	Loglikelihood: -2933009.051346	(delta): 6.45536
+27 (mini-batch, 2 batches) 	Elapsed: 0.483	Loglikelihood: -2933005.262884	(delta): 3.78846
+28 (mini-batch, 2 batches) 	Elapsed: 0.496	Loglikelihood: -2933001.307338	(delta): 3.95555
+29 (mini-batch, 2 batches) 	Elapsed: 0.509	Loglikelihood: -2933000.262047	(delta): 1.04529
+30 (mini-batch, 2 batches) 	Elapsed: 0.522	Loglikelihood: -2932999.566725	(delta): 0.695322
+31 (mini-batch, 2 batches) 	Elapsed: 0.534	Loglikelihood: -2932999.375594	(delta): 0.191131
+32 (mini-batch, 2 batches) 	Elapsed: 0.547	Loglikelihood: -2932998.737526	(delta): 0.638068
+33 (mini-batch, 2 batches) 	Elapsed: 0.560	Loglikelihood: -2932998.786367	(delta): -0.0488406
 Starting main algorithm
-1 (QN/Block) 	Elapsed: 0.674	Loglikelihood: -2932965.459753	(delta): inf
-2 (QN/Block) 	Elapsed: 0.703	Loglikelihood: -2932963.623793	(delta): 1.83596
-3 (QN/Block) 	Elapsed: 0.734	Loglikelihood: -2932963.275774	(delta): 0.348019
-4 (QN/Block) 	Elapsed: 0.776	Loglikelihood: -2932963.129045	(delta): 0.146729
-5 (QN/Block) 	Elapsed: 0.804	Loglikelihood: -2932963.106727	(delta): 0.0223178
-6 (QN/Block) 	Elapsed: 0.832	Loglikelihood: -2932963.079817	(delta): 0.0269099
-7 (QN/Block) 	Elapsed: 0.860	Loglikelihood: -2932963.073994	(delta): 0.005823
-8 (QN/Block) 	Elapsed: 0.888	Loglikelihood: -2932963.071934	(delta): 0.00205984
-9 (QN/Block) 	Elapsed: 0.916	Loglikelihood: -2932963.070470	(delta): 0.00146464
-10 (QN/Block) 	Elapsed: 0.944	Loglikelihood: -2932963.069341	(delta): 0.00112899
-11 (QN/Block) 	Elapsed: 0.972	Loglikelihood: -2932963.069302	(delta): 3.8431e-05
+1 (QN/Block) 	Elapsed: 0.597	Loglikelihood: -2932965.459753	(delta): inf
+2 (QN/Block) 	Elapsed: 0.623	Loglikelihood: -2932963.623793	(delta): 1.83596
+3 (QN/Block) 	Elapsed: 0.650	Loglikelihood: -2932963.275774	(delta): 0.348019
+4 (QN/Block) 	Elapsed: 0.686	Loglikelihood: -2932963.129045	(delta): 0.146729
+5 (QN/Block) 	Elapsed: 0.710	Loglikelihood: -2932963.106727	(delta): 0.0223178
+6 (QN/Block) 	Elapsed: 0.734	Loglikelihood: -2932963.079817	(delta): 0.0269099
+7 (QN/Block) 	Elapsed: 0.758	Loglikelihood: -2932963.073994	(delta): 0.005823
+8 (QN/Block) 	Elapsed: 0.782	Loglikelihood: -2932963.071934	(delta): 0.00205984
+9 (QN/Block) 	Elapsed: 0.806	Loglikelihood: -2932963.070470	(delta): 0.00146464
+10 (QN/Block) 	Elapsed: 0.830	Loglikelihood: -2932963.069341	(delta): 0.00112899
+11 (QN/Block) 	Elapsed: 0.854	Loglikelihood: -2932963.069302	(delta): 3.8431e-05
 Quasi-Newton: 1 of 11 extrapolations rejected, 0 accepted after damping
 Summary: 
-Converged in 11 iterations (1.036 sec)
+Converged in 11 iterations (0.919 sec)
 Loglikelihood: -2932963.069302
 Optimality check (max projected gradient): P 7.78e-05, Q 2.34e-08
 Writing output files.
-evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.14 sec)
+evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.10 sec)
 Log written to blue_wildebeest_noLD_admixer.7.log
 ```
 
@@ -274,7 +274,7 @@ between them and B-Ethosha.
 admixer --seed 0 -j10 -o blue_wildebeest_noLD_admixerMult blue_wildebeest_noLD.bed 7 --conv 3
 ```
 
-This tries seeds 0, 1, 2, ... until three runs agree with the best run, in 8 seconds.
+This tries seeds 0, 1, 2, ... until three runs agree with the best run, in 7 seconds.
 `blue_wildebeest_noLD_admixerMult.7.conv` lists the runs, best first:
 
 ```
@@ -305,7 +305,7 @@ The plots were made with evalAdmix's [`visFuns.R`](https://github.com/GenisGE/ev
 ### Comparison with ADMIXTURE
 
 Ten runs of each program on the same data (seeds 1–10, K = 7, 8 threads, one run at a time). The
-log-likelihoods in the left plot are from admixer 0.1.0; the times are from admixer 0.2.4 and ADMIXTURE 1.3.0,
+log-likelihoods in the left plot are from admixer 0.1.0; the times are from admixer 0.2.6 and ADMIXTURE 1.3.0,
 measured on the same server:
 
 ```
@@ -327,9 +327,9 @@ The best runs agree:
 
 ADMIXTURE's runs are a little lower because its stopping rule ends them slightly before the optimum.
 
-The median time per run was 1.3 s for admixer 0.2.4 and 53 s for ADMIXTURE, 42× faster (admixer 0.1.0 took
-3.2 s, 0.2.1 2.2 s, 0.2.2 1.7 s). admixer 0.2.4 also reaches the best likelihood in 5 of the 10 runs.
-So `--conv 3` with admixer (8 s above) takes much less time than a single ADMIXTURE run.
+The median time per run was 1.1 s for admixer 0.2.6 and 53 s for ADMIXTURE, 47× faster (admixer 0.1.0 took
+3.2 s, 0.2.1 2.2 s, 0.2.2 1.7 s, 0.2.4 1.3 s). admixer 0.2.6 also reaches the best likelihood in 5 of the 10
+runs. So `--conv 3` with admixer (7 s above) takes much less time than a single ADMIXTURE run.
 
 ## Example: genotype likelihoods, NGSadmix tutorial data, K = 3
 
@@ -351,7 +351,7 @@ Loglikelihood: -3865964.313411
 Loglikelihood over all GL entries, missing ones included (as NGSadmix): -3865964.313411
 Optimality check (max projected gradient): P 1.86e-05, Q 1.19e-11
 Writing output files.
-evalAdmix correlation of residuals written to input.3.corres.txt (0.27 sec)
+evalAdmix correlation of residuals written to input.3.corres.txt (0.24 sec)
 Log written to input.3.log
 ```
 
