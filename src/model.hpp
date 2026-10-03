@@ -100,6 +100,23 @@ struct Model {
   // with gradients D Q and D' P (D = (d_ij)).
   // ---------------------------------------------------------------------------------------
   static constexpr int TJ = 128, TI = 1024;  // tile shape of the SNP-parallel passes
+  // Work buffers kept between calls (the warm-up calls sqp_P and sqp_Q B times per epoch; allocating and zeroing
+  // them in every call cost 27 ms per sqp_Q call at N = 50,000). Grown when needed, never shrunk.
+  mutable std::vector<double> buf_h_, buf_g_, buf_zd_;
+  mutable std::vector<float> buf_zf_;
+  template <class T>
+  static T* grow(std::vector<T>& v, size_t n) {
+    if (v.size() < n) v.resize(n);
+    return v.data();
+  }
+  // SNPs per tile of a Newton P pass over n SNPs: TJ, halved (down to 32) while there are fewer than 3 tiles per
+  // thread (the warm-up's batches: 49 tiles of 128 for 44 threads left threads idle)
+  static int p_tile(int n) {
+    const int nt = omp_get_max_threads();
+    int tj = TJ;
+    while (tj > 32 && (n + tj - 1) / tj < 3 * nt) tj /= 2;
+    return tj;
+  }
 
   int KP() const { return K * (K + 1) / 2; }
   static double sum_in_order(const std::vector<double>& v) {
@@ -277,29 +294,34 @@ struct Model {
     if (jb < 0) jb = D.M;
     if (smallk_active())
       return smallk_dispatch([&](auto kc) { return sqp_P_small<decltype(kc)::value>(Q, P0, P1, ja, jb); });
-    const int N = D.N, kp = KP(), nsb = (jb - ja + TJ - 1) / TJ;
+    const int N = D.N, kp = KP(), tj = p_tile(jb - ja), nsb = (jb - ja + tj - 1) / tj;
     const bool hf = hess_float;
     // Z_i = packed(q_i q_i') for all individuals, packed once per call (shared by the threads) unless it would
     // take more than 256 MB; otherwise per tile.
     const bool zonce = (size_t)N * kp * (hf ? sizeof(float) : sizeof(double)) <= ((size_t)256 << 20);
-    std::vector<double> Zd(zonce && !hf ? (size_t)N * kp : 0);
-    std::vector<float> Zf(zonce && hf ? (size_t)N * kp : 0);
+    double* Zd = zonce && !hf ? grow(buf_zd_, (size_t)N * kp) : nullptr;
+    float* Zf = zonce && hf ? grow(buf_zf_, (size_t)N * kp) : nullptr;
     if (zonce) {
 #pragma omp parallel for schedule(static)
       for (int i = 0; i < N; i++) {
-        if (hf) pack_outer(Q + (size_t)i * K, Zf.data() + (size_t)i * kp);
-        else pack_outer(Q + (size_t)i * K, Zd.data() + (size_t)i * kp);
+        if (hf) pack_outer(Q + (size_t)i * K, Zf + (size_t)i * kp);
+        else pack_outer(Q + (size_t)i * K, Zd + (size_t)i * kp);
       }
     }
     std::vector<double> part(nsb, 0.0);
 #pragma omp parallel
     {
-      std::vector<double> T((size_t)TJ * TI), W(hf ? 0 : (size_t)TJ * TI), Z(zonce || hf ? 0 : (size_t)TI * kp);
-      std::vector<float> Wf(hf ? (size_t)TJ * TI : 0), Ztf(hf && !zonce ? (size_t)TI * kp : 0), Hf(hf ? TJ * kp : 0);
+      static thread_local std::vector<double> T, W;  // per-thread tiles, kept between calls
+      static thread_local std::vector<float> Wf;
+      if (T.size() < (size_t)TJ * TI) T.resize((size_t)TJ * TI);
+      if (!hf && W.size() < (size_t)TJ * TI) W.resize((size_t)TJ * TI);
+      if (hf && Wf.size() < (size_t)TJ * TI) Wf.resize((size_t)TJ * TI);
+      std::vector<double> Z(zonce || hf ? 0 : (size_t)TI * kp);
+      std::vector<float> Ztf(hf && !zonce ? (size_t)TI * kp : 0), Hf(hf ? TJ * kp : 0);
       std::vector<double> Hp(TJ * kp), G(TJ * K), H(K * K), lo(K), hi(K), d(K);
 #pragma omp for schedule(dynamic, 1)
       for (int sb = 0; sb < nsb; sb++) {
-        const int j0 = ja + sb * TJ, jn = std::min(TJ, jb - j0);
+        const int j0 = ja + sb * tj, jn = std::min(tj, jb - j0);
         std::fill(Hp.begin(), Hp.end(), 0.0);
         std::fill(G.begin(), G.end(), 0.0);
         for (int i0 = 0; i0 < N; i0 += TI) {
@@ -310,7 +332,7 @@ struct Model {
             part[sb] += D.tile_wd(j0, jn, i0, in, T.data(), Wf.data(), PMIN, PMAX);
             if (!zonce)
               for (int ii = 0; ii < in; ii++) pack_outer(Qi + (size_t)ii * K, Ztf.data() + (size_t)ii * kp);
-            const float* z = zonce ? Zf.data() + (size_t)i0 * kp : Ztf.data();
+            const float* z = zonce ? Zf + (size_t)i0 * kp : Ztf.data();
             // float product per tile of individuals (at most TI terms), added to the double accumulator
             cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, jn, kp, in, 1.0f, Wf.data(), in, z, kp, 0.0f,
                         Hf.data(), kp);
@@ -319,7 +341,7 @@ struct Model {
             part[sb] += D.tile_wd(j0, jn, i0, in, T.data(), W.data(), PMIN, PMAX);
             if (!zonce)
               for (int ii = 0; ii < in; ii++) pack_outer(Qi + (size_t)ii * K, Z.data() + (size_t)ii * kp);
-            const double* z = zonce ? Zd.data() + (size_t)i0 * kp : Z.data();
+            const double* z = zonce ? Zd + (size_t)i0 * kp : Z.data();
             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, jn, kp, in, 1.0, W.data(), in, z, kp, 1.0,
                         Hp.data(), kp);
           }
@@ -372,7 +394,8 @@ struct Model {
     const int N = D.N, kp = KP();
     const QGrid qg = q_grid(ja, jb);
     const int bi = qg.bi, bj = qg.bj, nib = qg.nib, nsp = qg.nsp;
-    std::vector<double> HpAll((size_t)nsp * N * kp, 0.0), GAll((size_t)nsp * N * K, 0.0);
+    double* HpAll = grow(buf_h_, (size_t)nsp * N * kp);
+    double* GAll = grow(buf_g_, (size_t)nsp * N * K);
 #pragma omp parallel
     {
       const bool hf = hess_float;
@@ -386,8 +409,10 @@ struct Model {
         for (int sp = 0; sp < nsp; sp++) {
           const int i0 = ib * bi, in = std::min(bi, N - i0);
           const int sa = ja + (int)((long)(jb - ja) * sp / nsp), sz = ja + (int)((long)(jb - ja) * (sp + 1) / nsp);
-          double* Hp = HpAll.data() + ((size_t)sp * N + i0) * kp;
-          double* G = GAll.data() + ((size_t)sp * N + i0) * K;
+          double* Hp = HpAll + ((size_t)sp * N + i0) * kp;
+          double* G = GAll + ((size_t)sp * N + i0) * K;
+          std::fill(Hp, Hp + (size_t)in * kp, 0.0);  // this task's block, zeroed here (in parallel)
+          std::fill(G, G + (size_t)in * K, 0.0);
           int nf = 0;  // tiles accumulated in Hf
           for (int j0 = sa; j0 < sz; j0 += bj) {
             const int jn = std::min(bj, sz - j0);
@@ -425,7 +450,7 @@ struct Model {
     constexpr int NVZ = (kp + VL - 1) / VL, kpp = NVZ * VL;  // packed Hessian row, padded to whole vectors
     constexpr int NVQ = (K + VL - 1) / VL, ldq = NVQ * VL;   // Q row (gradient operand), padded
     constexpr int RS = 8;                                    // SNPs per sub-block
-    const int N = D.N, nsb = (jb - ja + TJ - 1) / TJ, ldt = smallk::rup(std::min(TI, N));
+    const int N = D.N, tj = p_tile(jb - ja), nsb = (jb - ja + tj - 1) / tj, ldt = smallk::rup(std::min(TI, N));
     std::vector<double> part(nsb, 0.0);
 #pragma omp parallel
     {
@@ -434,7 +459,7 @@ struct Model {
       std::vector<double> H(K * K), lo(K), hi(K), d(K);
 #pragma omp for schedule(dynamic, 1)
       for (int sb = 0; sb < nsb; sb++) {
-        const int j0 = ja + sb * TJ, jn = std::min(TJ, jb - j0);
+        const int j0 = ja + sb * tj, jn = std::min(tj, jb - j0);
         std::fill(Hp.begin(), Hp.end(), 0.0);
         std::fill(G.begin(), G.end(), 0.0);
         for (int i0 = 0; i0 < N; i0 += TI) {
@@ -484,7 +509,8 @@ struct Model {
     const int N = D.N;
     const QGrid qg = q_grid(ja, jb);
     const int bi = qg.bi, nib = qg.nib, nsp = qg.nsp, ldb = smallk::rup(bi);
-    std::vector<double> HpAll((size_t)nsp * N * kp, 0.0), GAll((size_t)nsp * N * K, 0.0);
+    double* HpAll = grow(buf_h_, (size_t)nsp * N * kp);  // every task writes its whole block
+    double* GAll = grow(buf_g_, (size_t)nsp * N * K);
 #pragma omp parallel
     {
       // transposed accumulators (individuals in the vector lanes): HT (kp x n) = Y' W, GT (K x n) = P' D
@@ -515,8 +541,8 @@ struct Model {
             smallk::acc_cols<K>(jn, Ts.data(), ldb, Pj, K, n, GT.data(), ldb);
             smallk::acc_cols<kp>(jn, Ws.data(), ldb, Y.data(), kp, n, HT.data(), ldb);
           }
-          double* Hp = HpAll.data() + ((size_t)sp * N + i0) * kp;
-          double* G = GAll.data() + ((size_t)sp * N + i0) * K;
+          double* Hp = HpAll + ((size_t)sp * N + i0) * kp;
+          double* G = GAll + ((size_t)sp * N + i0) * K;
           for (int ii = 0; ii < in; ii++) {
             for (int p = 0; p < kp; p++) Hp[(size_t)ii * kp + p] = HT[(size_t)p * ldb + ii];
             for (int k = 0; k < K; k++) G[(size_t)ii * K + k] = GT[(size_t)k * ldb + ii];
@@ -527,7 +553,7 @@ struct Model {
   }
 
   // The Newton/QP step for every row of Q from the per-split Hessians and gradients (nsp x N x KP, nsp x N x K).
-  void q_solve(const std::vector<double>& HpAll, const std::vector<double>& GAll, int nsp, const double* Q0,
+  void q_solve(const double* HpAll, const double* GAll, int nsp, const double* Q0,
                double* Q1) const {
     const int N = D.N, kp = KP();
 #pragma omp parallel
