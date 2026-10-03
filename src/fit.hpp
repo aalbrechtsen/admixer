@@ -23,7 +23,7 @@ struct FitSettings {
   double tol = 1e-4;     // -C: stop when the log-likelihood improves by less than this per iteration
   int max_iter = 10000;  // quasi-Newton iterations at most
   int qn_secants = 3;    // quasi-Newton secant pairs (as ADMIXTURE)
-  int qn_damp = 1;       // after a rejected extrapolation, retry up to this many times with the step scaled by
+  int qn_damp = 2;       // after a rejected extrapolation, retry up to this many times with the step scaled by
   double qn_damp_factor = 0.5;  // this factor before falling back to F(F(x)) (0 = ADMIXTURE's rule)
   int hess_float = -1;  // Newton Hessians from single-precision products in the quasi-Newton phase: 1 on, 0 off,
                         // -1 auto (admixer.cpp: called genotypes with K >= HESS_FLOAT_MIN_K, where the Hessians

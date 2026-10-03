@@ -26,7 +26,7 @@
 #include "model.hpp"
 #include "multistart.hpp"
 
-static const char* VERSION = "0.2.7";
+static const char* VERSION = "0.2.8";
 
 static void usage(int code) {
   std::printf(
@@ -73,7 +73,7 @@ static void usage(int code) {
       "                      with K >= 8, off for genotype likelihoods\n"
       "  --smallk=X          1 (default): register-blocked kernels for K = 2-7 in the Newton steps; 0: OpenBLAS\n"
       "  --qn-damp=X         retry a rejected quasi-Newton extrapolation up to X times with the step scaled by\n"
-      "                      --qn-damp-factor (default X = 1, factor 0.5; X = 0: ADMIXTURE's rule, F(F(x)) at once)\n"
+      "                      --qn-damp-factor (default X = 2, factor 0.5; X = 0: ADMIXTURE's rule, F(F(x)) at once)\n"
       "  -h, --help          this help\n",
       VERSION);
   std::exit(code);
