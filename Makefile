@@ -8,7 +8,7 @@ LIBS     := -lz
 FPFLAGS  := -fno-trapping-math
 PREFIX   ?= /usr/local
 
-admixer: src/admixer.cpp src/io.hpp src/kernel.hpp src/log.hpp src/linalg.hpp src/smallk.hpp src/model.hpp src/fit.hpp src/evaladmix.hpp src/beagle.hpp src/multistart.hpp
+admixer: src/admixer.cpp src/io.hpp src/kernel.hpp src/log.hpp src/linalg.hpp src/smallk.hpp src/model.hpp src/fit.hpp src/evaladmix.hpp src/beagle.hpp src/multistart.hpp src/parental.hpp
 	$(CXX) $(CXXFLAGS) $(FPFLAGS) -fopenmp -o $@ src/admixer.cpp $(BLAS) $(LIBS)
 
 tests/unit: tests/unit.cpp src/io.hpp src/kernel.hpp src/beagle.hpp src/linalg.hpp src/smallk.hpp src/model.hpp src/multistart.hpp src/evaladmix.hpp

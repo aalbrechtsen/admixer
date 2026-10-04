@@ -84,6 +84,8 @@ extension (`data`) as prefix:
   genotype likelihoods on the posterior expected genotypes), for checking the model fit; plot it with evalAdmix's `visFuns.R`. It takes a few seconds for
   thousands of individuals but needs about 48 N² bytes of memory, so it is skipped above 20,000 individuals
   unless `--evaladmix` is given;
+* `data.K.parental`: the admixture proportions of each individual's two parents (see
+  [Parental and paired ancestry](#parental-and-paired-ancestry));
 * `data.K.log`: the log printed to the screen (command line, progress, final log-likelihood, optimality check).
 
 | option | meaning |
@@ -101,6 +103,8 @@ extension (`data`) as prefix:
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
 | `--no-evaladmix` | do not compute the evalAdmix correlation of residuals |
 | `--evaladmix` | compute it even for more than 20,000 individuals |
+| `--no-parental` | do not estimate the parents' admixture proportions (`data.K.parental`) |
+| `--paired` | also estimate the paired ancestries (`data.K.paired`; cost grows as K⁴) |
 | `--minMaf=X` | beagle input: keep sites with X < MAF < 1 − X (default 0.05, as NGSadmix; 0 keeps all) |
 | `--misTol=X` | beagle input: GLs with max − min < X count as missing (default 0.05, as NGSadmix) |
 | `--minInd=X` | beagle input: keep sites with more than X individuals with data (default 0 = off) |
@@ -121,6 +125,33 @@ most `--max_runs` runs. The output files are those of the best run, and `data.K.
 
 Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... until 3 runs agree
 (at most 10 runs).
+
+### Parental and paired ancestry
+
+After the fit, admixer estimates, for each individual and with P held fixed, the admixture proportions of its two
+parents (the parental model of NGSremix, Nøhr et al. 2021). The two alleles at a SNP come one from each parent,
+whose ancestries are drawn from the parents' proportions x and y; x = y = Q is the ADMIXTURE model, and an
+individual whose parents differ in ancestry (e.g. a first-generation admixed individual) has x ≠ y.
+`data.K.parental` has a header and one line per individual: x (`parent1_1` … `parent1_K`), y (`parent2_1` …),
+then the log-likelihood of the parental model and of the ADMIXTURE model for that individual. The gain (the
+difference of the two) measures the evidence that the parents differ: without a difference, twice the gain is
+roughly χ² with K − 1 degrees of freedom. Gains below 10 are reported as 0, with x = y = Q. The order of the two
+parents is arbitrary (parent 1 is the lexicographically larger vector). Ancestries with Q < 0.01 are held at their
+value. The SNPs are assumed independent: without LD pruning the gains are inflated.
+
+Which parent an allele came from is never observed, so the likelihood is nearly flat in the direction that pulls
+two parents with the same ancestry apart. admixer therefore checks every individual at x = y = Q first (one pass
+over the data gives the curvature in every direction that splits the parents), searches along the most promising
+direction, and fits (damped Newton steps) only the individuals where the split pays. This adds 5–26 % to the
+run time (8 threads: 1000 Genomes chr20, 2,590 individuals × 157,318 SNPs, K = 5: 5.9 s after a 34 s fit, K = 10:
+18 s after 70 s; simulated data without parental differences, 2,000 × 100,000, K = 5 and 10: 1.2–1.3 s). On the
+1000 Genomes data the recently admixed populations stand out (K = 5, individuals with a gain above 10: CLM 41/97,
+PUR 47/104, MXL 33/65, PEL 30/87, ASW 22/61, ACB 25/96; YRI 1/120, ESN 0/106, MSL 0/87).
+
+With `--paired`, `data.K.paired` gives for each individual the probabilities of the K(K+1)/2 unordered pairs of
+ancestries of the two alleles at a SNP (`pair_a_b`, a ≤ b; NGSremix's paired ancestry, concave, fitted by Newton
+steps), with the log-likelihoods. It costs K(K+1)/2 squared per genotype, so it is not run by default (same
+1000 Genomes data: 13 s at K = 5, 205 s at K = 10). Ancestries with Q < 0.01 are left out of the pairs.
 
 ## How it works
 
@@ -240,6 +271,7 @@ Loglikelihood: -2932963.069302
 Optimality check (max projected gradient): P 7.78e-05, Q 2.34e-08
 Writing output files.
 evalAdmix correlation of residuals written to blue_wildebeest_noLD_admixer.7.corres.txt (0.10 sec)
+Parental admixture written to blue_wildebeest_noLD_admixer.7.parental (0 of 73 individuals with parents of different ancestry; 5 passes, 0.02 sec)
 Log written to blue_wildebeest_noLD_admixer.7.log
 ```
 
@@ -252,6 +284,7 @@ This run takes 1.0 second and ends at log-likelihood −2932963.07. It writes th
 | `blue_wildebeest_noLD_admixer.7.Q` | 4.5 kB | admixture proportions, 73 rows × 7 columns (as ADMIXTURE) |
 | `blue_wildebeest_noLD_admixer.7.P.gz` | 0.9 MB | ancestral allele frequencies, 37,567 rows × 7 columns, gzipped (`--no-gzip` for plain text) |
 | `blue_wildebeest_noLD_admixer.7.corres.txt` | 50 kB | **evalAdmix correlation of residuals**, 73 × 73, `NA` on the diagonal |
+| `blue_wildebeest_noLD_admixer.7.parental` | 11 kB | the parents' admixture proportions, 73 rows: 2 × 7 proportions and two log-likelihoods (none of these wildebeest has parents of different ancestry) |
 | `blue_wildebeest_noLD_admixer.7.log` | 5 kB | the screen output: command, settings, every iteration, final log-likelihood, optimality check |
 
 The evalAdmix correlations are computed by default, in 0.1 s here. You do not need to run evalAdmix

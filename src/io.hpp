@@ -215,9 +215,18 @@ inline void read_matrix(const std::string& fn, double* A, size_t rows, int K) {
     }
   }
   if (t < rows * K && !tok.empty()) A[t++] = std::strtod(tok.c_str(), nullptr);
+  bool extra = false;  // anything after the expected values is an error, not silently dropped
+  if (t == rows * K)
+    while ((c = gzgetc(fp)) != -1)
+      if (!std::isspace(c)) {
+        extra = true;
+        break;
+      }
   gzclose(fp);
-  if (t != rows * K)
-    throw std::runtime_error(fn + ": expected " + std::to_string(rows) + " x " + std::to_string(K) + " values");
+  if (t != rows * K || extra)
+    throw std::runtime_error(fn + ": expected " + std::to_string(rows) + " x " + std::to_string(K) +
+                             " values (one row per SNP/site in the analysis: for genotype likelihoods, the sites "
+                             "left after --minMaf/--minInd filtering)");
 }
 // Writes the matrix with 6 decimals; gzip-compressed if gz. Chunks of rows are formatted (and compressed) in
 // parallel on the OpenMP threads; a compressed file is a series of gzip members, one per chunk, which gzip,

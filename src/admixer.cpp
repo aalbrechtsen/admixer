@@ -25,8 +25,9 @@
 #include "log.hpp"
 #include "model.hpp"
 #include "multistart.hpp"
+#include "parental.hpp"
 
-static const char* VERSION = "0.2.8";
+static const char* VERSION = "0.2.9";
 
 static void usage(int code) {
   std::printf(
@@ -53,6 +54,12 @@ static void usage(int code) {
       "                      (corrected estimator of van Waaij et al. 2023, for GLs on the posterior expected\n"
       "                      genotypes; plot with evalAdmix's visFuns.R). It needs memory ~ 48 N^2 bytes, so it\n"
       "                      is skipped for N > 20000 individuals unless --evaladmix is given\n"
+      "  --no-parental       do not write NAME.K.parental: the admixture proportions of each individual's two\n"
+      "                      parents, given P (the model of NGSremix -bothanc), and the log-likelihoods of this\n"
+      "                      model and of the ADMIXTURE model (gain >> 1: parents of different ancestry; gains\n"
+      "                      below 10 are reported as 0, with both parents = Q; LD inflates the gains)\n"
+      "  --paired            also write NAME.K.paired: the probabilities of each unordered pair of ancestries of\n"
+      "                      the two alleles at a SNP (K(K+1)/2 per individual), given P (its cost grows as K^4)\n"
       "  --conv X            convergence test with several starts (seeds seed, seed+1, ...): stop when X runs\n"
       "                      agree with the best run (highest likelihood); writes the best run and NAME.K.conv\n"
       "  -m X, --max_runs=X  with --conv: at most X runs (default 10)\n"
@@ -95,7 +102,8 @@ struct Options {
   int prime = -1, minibatch = -1;        // < 0: the data type's default
   std::string input, prefix, out, hess = "exact";
   bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true, write_P = true;
-  bool smallk = true;
+  bool smallk = true, parental = true;
+  bool paired = false;
   std::string thread_note;  // why -j was capped, or that it exceeds the physical cores (printed in the log)  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
 
@@ -300,6 +308,19 @@ static void analyse(Data& D, Options& o, double t0) {
     write_corres(pre + ".corres.txt", cor, D.N);
     say("evalAdmix correlation of residuals written to %s.corres.txt (%.2f sec)\n", pre.c_str(), omp_get_wtime() - te);
   }
+  const bool paired = o.paired;
+  if (o.parental || paired) {
+    const auto pr = parental::estimate(D, x.data(), x.data() + m.nP, K, o.parental, paired);
+    if (o.parental) {
+      parental::write(pre + ".parental", pr, D.N, K, false);
+      say("Parental admixture written to %s.parental (%d of %d individuals with parents of different ancestry; %d passes, "
+          "%.2f sec)\n", pre.c_str(), pr.n_split, D.N, pr.passes_par, pr.sec_par);
+    }
+    if (paired) {
+      parental::write(pre + ".paired", pr, D.N, K, true);
+      say("Paired ancestry written to %s.paired (%d passes, %.2f sec)\n", pre.c_str(), pr.passes_pair, pr.sec_pair);
+    }
+  }
 }
 
 int main(int argc, char** argv) {
@@ -315,6 +336,8 @@ int main(int argc, char** argv) {
     else if (s == "--supervised") o.supervised = true;
     else if (s == "--evaladmix") o.evaladmix = o.evaladmix_forced = true;
     else if (s == "--no-evaladmix") o.evaladmix = false;
+    else if (s == "--no-parental") o.parental = false;
+    else if (s == "--paired") o.paired = true;
     else if (s == "--no-gzip") o.gz = false;
     else if (s == "--no-P") o.write_P = false;
     else if (s == "--keep-missing") o.glf.skip_missing = false;

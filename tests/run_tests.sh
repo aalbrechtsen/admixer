@@ -86,6 +86,23 @@ formats() {
   ok "$n: log file written" "a == 1" "$(grep -c '^Log written' "$n.$K.log")"
 }
 
+# parental (and with paired = 1, paired) ancestry file of run n: header + N rows, simplices summing to 1, log L of the
+# model >= log L of the ADMIXTURE model
+parfiles() {
+  local n=$1 K=$2 N=$3 f=$1.$2.parental
+  ok "$n: parental file has a header and $N rows" "a == b + 1" "$(nrows "$f")" "$N"
+  ok "$n: parental: 2K + 2 columns, both parents sum to 1" "a == 0" \
+    "$(awk -v K="$K" 'NR > 1 {s=0; t=0; for(k=1;k<=K;k++) {s+=$k; t+=$(K+k)} if (NF != 2*K+2 || s < 0.9999 || s > 1.0001 || t < 0.9999 || t > 1.0001) bad++} END{print bad+0}' "$f")"
+  ok "$n: parental log L >= ADMIXTURE log L" "a == 0" "$(awk -v K="$K" 'NR > 1 && $(2*K+1) < $(2*K+2) - 1e-6 {bad++} END{print bad+0}' "$f")"
+  if [ "${4:-0}" = 1 ]; then
+    local kp=$((K * (K + 1) / 2)) g=$1.$2.paired
+    ok "$n: paired file has a header and $N rows" "a == b + 1" "$(nrows "$g")" "$N"
+    ok "$n: paired: K(K+1)/2 + 2 columns summing to 1" "a == 0" \
+      "$(awk -v P="$kp" 'NR > 1 {s=0; for(k=1;k<=P;k++) s+=$k; if (NF != P+2 || s < 0.9999 || s > 1.0001) bad++} END{print bad+0}' "$g")"
+    ok "$n: paired log L >= ADMIXTURE log L" "a == 0" "$(awk -v P="$kp" 'NR > 1 && $(P+1) < $(P+2) - 1e-6 {bad++} END{print bad+0}' "$g")"
+  fi
+}
+
 echo "== unit tests"
 if "$ROOT/tests/unit" > unit.out 2>&1; then pass "unit tests (tests/unit.cpp)"; else cat unit.out; fail "unit tests"; fi
 
@@ -110,12 +127,16 @@ ok "plink: last log-likelihood change < -C (1e-4)" "a < 1e-4 && a > -1e-4" \
 ok "plink: no log-likelihood change of the size of log L" "a == 0" \
   "$(grep 'QN/Block' plink.3.log | awk -F'\t' 'NR > 1 {split($3, l, " "); split($4, d, " "); if (d[2] > 0.01 * -l[2]) n++} END{print n+0}')"
 formats plink 3 200 4000
+parfiles plink 3 200
 ok "plink: evalAdmix correlations 200 x 200" "a == 40000" "$(awk '{n+=NF} END{print n}' plink.3.corres.txt)"
 read -r qmax qms qrmse < <("$ROOT/tests/qdist" plink.3.Q sim.true.Q 3)
 ok "plink: Q close to the truth (RMSE < 0.05)" "a < 0.05" "$qrmse"
 run plink_rep sim.bed 3 -s 1
 ok "plink: same seed gives the same Q" "a == 0" "$(cmp -s plink.3.Q plink_rep.3.Q; echo $?)"
-run plink_noP sim.bed 3 -s 1 --no-P --no-evaladmix
+run plink_noP sim.bed 3 -s 1 --no-P --no-evaladmix --no-parental
+ok "plink --no-parental: no parental file" "a == 0" "$( [ ! -e plink_noP.3.parental ]; echo $?)"
+run plink_pair sim.bed 3 -s 1 --no-evaladmix --paired
+parfiles plink_pair 3 200 1
 ok "plink --no-P: no P file, same Q" "a == 0" "$( [ ! -e plink_noP.3.P.gz ] && [ ! -e plink_noP.3.P ] && cmp -s plink.3.Q plink_noP.3.Q; echo $?)"
 run plink_plain sim.bed 3 -s 1 --no-gzip --no-evaladmix
 ok "plink: P.gz (one gzip member per chunk of rows) = --no-gzip text" "a == 0" "$(zcat plink.3.P.gz | cmp -s - plink_plain.3.P; echo $?)"
@@ -148,6 +169,7 @@ for d in d3 mixed; do
   ok "$n: KKT P < 1e-3" "a < 1e-3" "$kp"; ok "$n: KKT Q < 1e-5" "a < 1e-5" "$kq"
   M=$(grep -m1 '^Input: genotype likelihoods' $n.3.log | sed 's/.*; \([0-9]*\) sites after filtering.*/\1/')
   formats $n 3 200 "$M"
+  parfiles $n 3 200
   ok "$n: full log-likelihood reported" "a == 1" "$(grep -c '^Loglikelihood over all GL entries' $n.3.log)"
   read -r qmax qms qrmse < <("$ROOT/tests/qdist" $n.3.Q sim.true.Q 3)
   ok "$n: Q close to the truth (RMSE < 0.12)" "a < 0.12" "$qrmse"

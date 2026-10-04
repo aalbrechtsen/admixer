@@ -100,6 +100,42 @@ The log says whether the runs converged.
 Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... until 3 runs agree
 (at most 10 runs).
 
+## Parental and paired ancestry
+
+`src/parental.hpp`; run after the fit (and after evalAdmix) with P and Q fixed, so every individual is a separate
+problem. The models are those of NGSremix (`-bothanc 1`). With u = x·fⱼ and v = y·fⱼ for the parents'
+proportions x, y, the probability of the data at SNP j is L = G0(1−u)(1−v) + G1(u(1−v) + v(1−u)) + G2·uv, with
+(G0, G1, G2) the genotype likelihoods (one-hot for called genotypes). NGSremix halves the heterozygote term of
+the parental model; for called genotypes that is a constant, for genotype likelihoods it changes the model, and
+admixer uses the term above. The per-individual log-likelihoods in the output files include the factor 2 of a
+heterozygote (admixer's main log-likelihood for called genotypes omits it), so the three models' values are
+comparable.
+
+* **Parental fit.** x = y = q is a stationary point, and with equal parents the expected curvature in the
+  direction that splits them is 0 (G0 − 2G1 + G2 summed over the genotypes is 0), so EM and Newton both crawl
+  there (EM with SQUAREM needed up to 1,500 passes on NGSremix's PLINK example). admixer:
+  1. one pass at x = y = q gives each individual's log-likelihood and Mc = Σⱼ cⱼ fⱼfⱼᵀ with
+     c = (G0 − 2G1 + G2)/L; moving the parents apart along d (zero sum) changes log L by −t² dᵀMc d + O(t⁴);
+  2. the most negative eigenvector of Mc on the zero-sum subspace of the ancestries with q ≥ 0.01 is the split
+     direction; log L is evaluated at x = q ± t·d for 4 step lengths (4 passes);
+  3. individuals whose split gains at least 10 log-units get damped Newton steps (Levenberg–Marquardt) on (x, y)
+     jointly: exact gradient and Hessian (blocks Σ a²ffᵀ, Σ b²ffᵀ, Σ (ab − c)ffᵀ with a = ∂ℓ/∂u, b = ∂ℓ/∂v,
+     formed by BLAS products over 256-SNP chunks), the smallest shift that makes the Hessian positive definite,
+     and an active-set QP with one equality per parent; a step that lowers log L is retried with more damping
+     from the stored derivatives (no extra pass); at most 30 passes, stop at a gain < 0.01;
+  4. everyone else keeps x = y = q (gain 0), and nobody is reported below the ADMIXTURE log-likelihood.
+
+  The passes put 64 individuals in SIMD lanes (parameters transposed), skip individuals that are done, and split
+  the SNPs into chunks for the threads. Validation: on NGSremix's PLINK example (126 individuals, 104,290 SNPs,
+  K = 2) all 9 individuals with a gain above 10 in a 3-start EM fit to convergence are found, with proportions
+  within 0.0002, and they agree with NGSremix's within 0.0003. For the individuals with smaller gains admixer
+  reports x = y = q, where NGSremix reports a weakly determined split (differences up to 0.19).
+* **Paired fit** (`--paired`): log L is concave in π, so plain damped Newton from the ADMIXTURE point
+  (π_aa = q_a², π_ab = 2q_a q_b) converges in 5–18 passes; pairs with an ancestry below 0.01 are held fixed.
+  On NGSremix's GL example (6 individuals, K = 3) the estimates agree with NGSremix's within 0.002–0.02 and the
+  log-likelihoods within 0.01, except where a pair with an ancestry below 0.01 is held fixed (0.3 log-units).
+* **Cost** (8 threads, Xeon Gold 6152): see the README. The paired Hessian costs (K(K+1)/2)² per genotype.
+
 ## Advanced options
 
 Mainly for benchmarking: `--bound=X` (P in [X, 1 − X] and Q ≥ X; default 1e-5 for genotypes as ADMIXTURE,
