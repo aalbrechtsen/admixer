@@ -24,10 +24,10 @@ Details beyond everyday use (algorithms, performance, testing, differences from 
 
 Nothing else needs to be installed: OpenBLAS, zlib and the C++/OpenMP runtimes are built in. It runs on any
 x86_64 Linux with glibc 2.28 or newer (RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 10+), and uses AVX2 or
-AVX-512 when the CPU has it.
+AVX-512 when the CPU has it. The binary in `bin/` is the current version (0.2.8).
 
 ```
-wget https://github.com/aalbrechtsen/admixer/releases/latest/download/admixer-linux-x86_64.tar.gz
+wget https://github.com/aalbrechtsen/admixer/raw/main/bin/admixer-linux-x86_64.tar.gz
 tar xzf admixer-linux-x86_64.tar.gz
 ./admixer
 ```

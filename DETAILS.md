@@ -151,7 +151,8 @@ Measurements, profiles and what was tried: [`bench/perf_results.md`](bench/perf_
 
 ## Prebuilt binary
 
-`./build-static.sh` (needs podman or docker) builds `dist/admixer-linux-x86_64.tar.gz` in the
+The tarball is committed as `bin/admixer-linux-x86_64.tar.gz` (the README's download link); for a new version, copy
+the new build there. `./build-static.sh` (needs podman or docker) builds `dist/admixer-linux-x86_64.tar.gz` in the
 manylinux_2_28 container (glibc 2.28, GCC 14). OpenBLAS (with `DYNAMIC_ARCH`, so its kernels are chosen for
 the CPU at run time) and zlib are built from source once into `.build/` and linked statically, as are
 libstdc++, libgcc and libgomp; the script fails if the binary needs any shared library besides glibc.
