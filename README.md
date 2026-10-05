@@ -69,6 +69,9 @@ This builds the `admixer` binary in the current directory. `sudo make install` c
 
 ## Usage
 
+A worked example with figures, from the fit to the parental and paired ancestry of a finished run (1000 Genomes
+chr20): [docs/USAGE.md](docs/USAGE.md).
+
 ```
 admixer [options] data.bed K            # called genotypes: data.bed, data.bim, data.fam
 admixer [options] data.beagle.gz K      # genotype likelihoods (any input not ending in .bed)
@@ -129,6 +132,8 @@ Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... unti
 
 ### Parental and paired ancestry
 
+A walk-through with figures is in [docs/USAGE.md](docs/USAGE.md#4-parental-admixture-from-the-finished-run).
+
 admixer can estimate, for each individual and with P held fixed, the admixture proportions of its two
 parents (the parental model of NGSremix, Nøhr et al. 2021). The two alleles at a SNP come one from each parent,
 whose ancestries are drawn from the parents' proportions x and y; x = y = Q is the ADMIXTURE model, and an
@@ -156,8 +161,10 @@ admixer data.bed 5 --from data --parental --paired   # both
 
 Costs (8 threads: 1000 Genomes chr20, 2,590 individuals × 157,318 SNPs, K = 5: 5.9 s after a 34 s fit, or 7.9 s in all with `--from`; K = 10:
 18 s after 70 s; simulated data without parental differences, 2,000 × 100,000, K = 5 and 10: 1.2–1.3 s). On the
-1000 Genomes data the recently admixed populations stand out (K = 5, individuals with a gain above 10: CLM 41/97,
-PUR 47/104, MXL 33/65, PEL 30/87, ASW 22/61, ACB 25/96; YRI 1/120, ESN 0/106, MSL 0/87).
+1000 Genomes data the recently admixed populations stand out (K = 5, individuals with a gain above 10, all
+SNPs: CLM 41/97, PUR 47/104, MXL 33/65, PEL 30/87, ASW 22/61, ACB 25/96; YRI 1/120, ESN 0/106, MSL 0/87). On
+LD-pruned SNPs (28,426) only these populations remain (ASW 9, CLM 8, PEL 7, MXL 6, PUR 6, ACB 4; one CHB); without
+pruning, every population has some individuals above 10, so prune first.
 
 With `--paired`, `data.K.paired` gives for each individual the probabilities of the K(K+1)/2 unordered pairs of
 ancestries of the two alleles at a SNP (`pair_a_b`, a ≤ b; NGSremix's paired ancestry, concave, fitted by Newton
