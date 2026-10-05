@@ -102,7 +102,8 @@ Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... unti
 
 ## Parental and paired ancestry
 
-`src/parental.hpp`; run after the fit (and after evalAdmix) with P and Q fixed, so every individual is a separate
+`src/parental.hpp`; run with `--parental`/`--paired` after the fit (and after evalAdmix), or with `--from` on the P and Q
+files of an earlier run (rounded to 6 decimals, then projected onto the bounds), with P and Q fixed, so every individual is a separate
 problem. The models are those of NGSremix (`-bothanc 1`). With u = x·fⱼ and v = y·fⱼ for the parents'
 proportions x, y, the probability of the data at SNP j is L = G0(1−u)(1−v) + G1(u(1−v) + v(1−u)) + G2·uv, with
 (G0, G1, G2) the genotype likelihoods (one-hot for called genotypes). NGSremix halves the heterozygote term of

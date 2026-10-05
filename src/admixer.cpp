@@ -27,7 +27,7 @@
 #include "multistart.hpp"
 #include "parental.hpp"
 
-static const char* VERSION = "0.2.9";
+static const char* VERSION = "0.2.10";
 
 static void usage(int code) {
   std::printf(
@@ -54,12 +54,15 @@ static void usage(int code) {
       "                      (corrected estimator of van Waaij et al. 2023, for GLs on the posterior expected\n"
       "                      genotypes; plot with evalAdmix's visFuns.R). It needs memory ~ 48 N^2 bytes, so it\n"
       "                      is skipped for N > 20000 individuals unless --evaladmix is given\n"
-      "  --no-parental       do not write NAME.K.parental: the admixture proportions of each individual's two\n"
+      "  --parental          also write NAME.K.parental: the admixture proportions of each individual's two\n"
       "                      parents, given P (the model of NGSremix -bothanc), and the log-likelihoods of this\n"
       "                      model and of the ADMIXTURE model (gain >> 1: parents of different ancestry; gains\n"
       "                      below 10 are reported as 0, with both parents = Q; LD inflates the gains)\n"
       "  --paired            also write NAME.K.paired: the probabilities of each unordered pair of ancestries of\n"
       "                      the two alleles at a SNP (K(K+1)/2 per individual), given P (its cost grows as K^4)\n"
+      "  --from=PREFIX       no fit: read P and Q of an earlier run (PREFIX.K.P[.gz], PREFIX.K.Q) and write\n"
+      "                      NAME.K.parental (unless --paired alone is given), --paired and --evaladmix outputs\n"
+      "                      only; the log goes to NAME.K.from.log. Use the same input and filters as that run\n"
       "  --conv X            convergence test with several starts (seeds seed, seed+1, ...): stop when X runs\n"
       "                      agree with the best run (highest likelihood); writes the best run and NAME.K.conv\n"
       "  -m X, --max_runs=X  with --conv: at most X runs (default 10)\n"
@@ -102,8 +105,8 @@ struct Options {
   int prime = -1, minibatch = -1;        // < 0: the data type's default
   std::string input, prefix, out, hess = "exact";
   bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true, write_P = true;
-  bool smallk = true, parental = true;
-  bool paired = false;
+  bool smallk = true, parental = false, paired = false;
+  std::string from;  // --from: P and Q of an earlier run, no fit
   std::string thread_note;  // why -j was capped, or that it exceeds the physical cores (printed in the log)  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
 
@@ -137,12 +140,63 @@ static std::string input_prefix(const std::string& f) {
   return p;
 }
 
+// The outputs after a fit (or after reading P and Q with --from): evalAdmix, parental and paired ancestry.
+template <class Data>
+static void post_fit(const Data& D, Options& o, const Model<Data>& m, const Vec& x, const std::string& pre) {
+  const int K = o.K;
+  if (o.evaladmix && D.N > 20000 && !o.evaladmix_forced) {
+    say("evalAdmix skipped: %d individuals would need ~%.0f GB of memory (use --evaladmix to force)\n", D.N,
+        48.0 * D.N * D.N / 1e9);
+    o.evaladmix = false;
+  }
+  if (o.evaladmix) {
+    const double te = omp_get_wtime();
+    std::vector<double> cor;
+    if constexpr (std::is_same_v<Data, Genotypes>)
+      cor = evaladmix_corrected(D, x.data() + m.nP, K, o.threads);
+    else
+      cor = evaladmix_gl(D, x.data(), x.data() + m.nP, K, o.glf.misTol, m.PMIN, m.PMAX, o.threads);
+    write_corres(pre + ".corres.txt", cor, D.N);
+    say("evalAdmix correlation of residuals written to %s.corres.txt (%.2f sec)\n", pre.c_str(), omp_get_wtime() - te);
+  }
+  const bool paired = o.paired;
+  if (o.parental || paired) {
+    const auto pr = parental::estimate(D, x.data(), x.data() + m.nP, K, o.parental, paired);
+    if (o.parental) {
+      parental::write(pre + ".parental", pr, D.N, K, false);
+      say("Parental admixture written to %s.parental (%d of %d individuals with parents of different ancestry; %d passes, "
+          "%.2f sec)\n", pre.c_str(), pr.n_split, D.N, pr.passes_par, pr.sec_par);
+    }
+    if (paired) {
+      parental::write(pre + ".paired", pr, D.N, K, true);
+      say("Paired ancestry written to %s.paired (%d passes, %.2f sec)\n", pre.c_str(), pr.passes_pair, pr.sec_pair);
+    }
+  }
+}
+
 // Everything after reading the data; Data = Genotypes (PLINK) or GLData (beagle).
 template <class Data>
 static void analyse(Data& D, Options& o, double t0) {
   const bool gl = std::is_same_v<Data, GLData>;
   const int K = o.K;
   FitSettings& fs = o.fs;
+  if (!o.from.empty()) {  // --from: P and Q of an earlier run; no fit
+    Model<Data> m(D, K);
+    m.set_bound(o.bound);
+    Vec x(m.size());
+    const std::string pre_in = o.from + "." + std::to_string(K);
+    std::string fp = pre_in + ".P";
+    if (!std::ifstream(fp) && std::ifstream(fp + ".gz")) fp += ".gz";
+    read_matrix(fp, x.data(), D.M, K);
+    read_matrix(pre_in + ".Q", x.data() + m.nP, D.N, K);
+    m.project(x.data());  // the written values are rounded (P to 0 below 5e-7)
+    say(gl ? "Size of GL data: %dx%d\n" : "Size of G: %dx%d\n", D.N, D.M);
+    say("Threads: %d\n", o.threads);
+    say("No fit: P read from %s and Q from %s.Q\n", fp.c_str(), pre_in.c_str());
+    say("Loglikelihood: %f\n", m.loglik(x.data()));
+    post_fit(D, o, m, x, o.out + "." + std::to_string(K));
+    return;
+  }
   say("Random seed: %lu\n", fs.seed);
   if (gl)
     say("Point estimation method: Block relaxation algorithm (Newton/QP steps with the %s curvature of the GL "
@@ -293,34 +347,7 @@ static void analyse(Data& D, Options& o, double t0) {
       std::copy(x.begin() + (size_t)j * K, x.begin() + (size_t)(j + 1) * K, Pout.begin() + (size_t)perm[j] * K);
     write_matrix(pre + (o.gz ? ".P.gz" : ".P"), Pout.data(), D.M, K, o.gz);
   }
-  if (o.evaladmix && D.N > 20000 && !o.evaladmix_forced) {
-    say("evalAdmix skipped: %d individuals would need ~%.0f GB of memory (use --evaladmix to force)\n", D.N,
-        48.0 * D.N * D.N / 1e9);
-    o.evaladmix = false;
-  }
-  if (o.evaladmix) {
-    const double te = omp_get_wtime();
-    std::vector<double> cor;
-    if constexpr (std::is_same_v<Data, Genotypes>)
-      cor = evaladmix_corrected(D, x.data() + m.nP, K, o.threads);
-    else
-      cor = evaladmix_gl(D, x.data(), x.data() + m.nP, K, o.glf.misTol, m.PMIN, m.PMAX, o.threads);
-    write_corres(pre + ".corres.txt", cor, D.N);
-    say("evalAdmix correlation of residuals written to %s.corres.txt (%.2f sec)\n", pre.c_str(), omp_get_wtime() - te);
-  }
-  const bool paired = o.paired;
-  if (o.parental || paired) {
-    const auto pr = parental::estimate(D, x.data(), x.data() + m.nP, K, o.parental, paired);
-    if (o.parental) {
-      parental::write(pre + ".parental", pr, D.N, K, false);
-      say("Parental admixture written to %s.parental (%d of %d individuals with parents of different ancestry; %d passes, "
-          "%.2f sec)\n", pre.c_str(), pr.n_split, D.N, pr.passes_par, pr.sec_par);
-    }
-    if (paired) {
-      parental::write(pre + ".paired", pr, D.N, K, true);
-      say("Paired ancestry written to %s.paired (%d passes, %.2f sec)\n", pre.c_str(), pr.passes_pair, pr.sec_pair);
-    }
-  }
+  post_fit(D, o, m, x, pre);
 }
 
 int main(int argc, char** argv) {
@@ -336,7 +363,8 @@ int main(int argc, char** argv) {
     else if (s == "--supervised") o.supervised = true;
     else if (s == "--evaladmix") o.evaladmix = o.evaladmix_forced = true;
     else if (s == "--no-evaladmix") o.evaladmix = false;
-    else if (s == "--no-parental") o.parental = false;
+    else if (s == "--parental") o.parental = true;
+    else if (s.rfind("--from", 0) == 0) o.from = opt_value(argc, argv, a, "--from");
     else if (s == "--paired") o.paired = true;
     else if (s == "--no-gzip") o.gz = false;
     else if (s == "--no-P") o.write_P = false;
@@ -382,6 +410,11 @@ int main(int argc, char** argv) {
   if (o.K < 1 || o.threads < 1 || o.conv < 0 || o.max_runs < 1 || (o.hess != "exact" && o.hess != "em") ||
       fs.qn_damp < 0 || !(fs.qn_damp_factor > 0 && fs.qn_damp_factor < 1))
     usage(1);
+  if (!o.from.empty()) {
+    if (o.projection || o.supervised || o.conv > 0) usage(1);
+    if (!o.paired) o.parental = true;
+    if (!o.evaladmix_forced) o.evaladmix = false;
+  }
   fs.seed = seed_s == "time" ? (unsigned long)std::time(nullptr) : std::strtoul(seed_s.c_str(), nullptr, 10);
   const bool gl = is_beagle(o.input);
   o.prefix = gl ? input_prefix(o.input) : strip_extension(o.input);
@@ -406,7 +439,7 @@ int main(int argc, char** argv) {
     o.thread_note += "Note: " + std::to_string(o.threads) + " threads on " + std::to_string(pc) +
                      " physical cores; one thread per core is usually faster\n";
   omp_set_num_threads(o.threads);
-  const std::string logname = o.out + "." + std::to_string(o.K) + ".log";
+  const std::string logname = o.out + "." + std::to_string(o.K) + (o.from.empty() ? ".log" : ".from.log");
   log_file() = std::fopen(logname.c_str(), "w");
   if (!log_file()) std::fprintf(stderr, "Warning: cannot write log file %s\n", logname.c_str());
   std::string cmd;
