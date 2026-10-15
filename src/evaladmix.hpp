@@ -137,24 +137,46 @@ inline std::vector<double> evaladmix_core(int M, int N, const double* Q, int K, 
   return cor;
 }
 
-// Called genotypes (PLINK): values g, D = diag(mean g(2-g)) over observed sites.
-inline std::vector<double> evaladmix_corrected(const Genotypes& D, const double* Q, int K, int threads) {
+// Called genotypes (PLINK): values g, D = diag(mean g(2-g)) over observed sites. Pseudohaploid data (one allele,
+// g = 0/1) has no such unbiased per-entry estimate (g(1-g) = 0), so there D = diag(mean (g - h)^2) with the fitted
+// h = Q_i P_j, as for genotype likelihoods (P is needed only then).
+inline std::vector<double> evaladmix_corrected(const Genotypes& D, const double* P, const double* Q, int K,
+                                               int threads) {
   const int M = D.M, N = D.N;
   std::vector<double> dh(N, 0.0);
-  for (int j = 0; j < M; j++) {
-    const uint8_t* g = D.row(j);
-    for (int i = 0; i < N; i++)
-      if (g[i] != 3) dh[i] += g[i] * (2.0 - g[i]);
+  std::vector<uint8_t> g(N);
+  if (D.haploid) {
+    const int B = 256;
+    std::vector<double> H((size_t)B * N);
+    openblas_set_num_threads(threads);
+    for (int j0 = 0; j0 < M; j0 += B) {
+      const int jn = std::min(B, M - j0);
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans, jn, N, K, 1.0, P + (size_t)j0 * K, K, Q, K, 0.0, H.data(), N);
+      for (int jj = 0; jj < jn; jj++) {
+        D.decode(j0 + jj, g.data());
+        const double* h = H.data() + (size_t)jj * N;
+        for (int i = 0; i < N; i++)
+          if (g[i] != 3) dh[i] += (g[i] - h[i]) * (g[i] - h[i]);
+      }
+    }
+    openblas_set_num_threads(1);
+  } else {
+    for (int j = 0; j < M; j++) {
+      D.decode(j, g.data());
+      for (int i = 0; i < N; i++)
+        if (g[i] != 3) dh[i] += g[i] * (2.0 - g[i]);
+    }
   }
   for (int i = 0; i < N; i++)
     if (D.nobs[i] > 0) dh[i] /= D.nobs[i];
   return evaladmix_core(M, N, Q, K, dh, threads, [&](int j0, int jn, double* X, uint8_t* O) {
     for (int jj = 0; jj < jn; jj++) {
-      const uint8_t* g = D.row(j0 + jj);
+      uint8_t* o = O + (size_t)jj * N;
+      D.decode(j0 + jj, o);  // genotypes first, then turned into the mask
       for (int i = 0; i < N; i++) {
         const size_t t = (size_t)jj * N + i;
-        O[t] = g[i] != 3;
-        X[t] = g[i];
+        X[t] = o[i];
+        o[i] = o[i] != 3;
       }
     }
   });

@@ -1,6 +1,7 @@
 // admixer: input (PLINK .bed/.bim/.fam) and output (.Q/.P matrices).
 #pragma once
 #include <algorithm>
+#include <cassert>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -19,17 +20,81 @@
 // Called genotypes (PLINK input). Besides the data, a data type provides the per-entry part of the
 // likelihood that the BLAS kernels of model.hpp need (see GLData in beagle.hpp for the other data type).
 // On entry every tile holds h = sum_k Q_ik P_jk; lo/hi are the bounds h is clamped to.
+// The genotypes are kept packed, 2 bits each (as in the .bed file; 4x less memory than a byte each), with
+// admixer's own codes: 0/1/2 = copies of the second allele, 3 = missing. Individual i of a row is in byte
+// i / 4 at bits 2 (i % 4); bits past N in a row's last byte hold 3.
+struct GenoTables {
+  double val[256][4];  // the 4 genotypes of a packed byte, as doubles (the per-entry pass)
+  uint8_t code[256][4];
+  uint8_t from_bed[256];  // .bed byte -> packed byte (PLINK: 00 hom A1, 01 missing, 10 het, 11 hom A2)
+  // pseudohaploid (one allele per entry, copies of A2): hom A1 -> 0, hom A2 -> 1; heterozygous calls are
+  // left at 3 here and set by het_allele (read_bed)
+  uint8_t from_bed_hap[256];
+  uint8_t nhet[256];  // heterozygous calls in a .bed byte
+  GenoTables() {
+    static const uint8_t dec[4] = {0, 3, 1, 2}, hap[4] = {0, 3, 3, 1};
+    for (int b = 0; b < 256; b++) {
+      from_bed[b] = from_bed_hap[b] = nhet[b] = 0;
+      for (int t = 0; t < 4; t++) {
+        const uint8_t g = (b >> (2 * t)) & 3;
+        code[b][t] = g, val[b][t] = g;
+        from_bed[b] |= dec[g] << (2 * t);
+        from_bed_hap[b] |= hap[g] << (2 * t);
+        nhet[b] += g == 2;
+      }
+    }
+  }
+};
+inline const GenoTables GTAB;
+
+// Pseudohaploid analysis: the allele (0 = A1, 1 = A2) drawn for a heterozygous call of SNP number snp (line of the
+// .bim, from 1) and individual number ind (line of the .fam, from 1). A fixed hash (splitmix64) of the two
+// numbers: a fair coin, independent between entries, and the same in every run (no seed). Rules shared between
+// individuals (the same allele for all heterozygotes of a SNP, or alternating by SNP) bias Q or create
+// artificial clusters (DETAILS.md, "Pseudohaploid analysis").
+inline uint8_t het_allele(uint64_t snp, uint64_t ind) {
+  uint64_t z = (snp << 32 | ind) + 0x9E3779B97F4A7C15ull;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+  return (uint8_t)((z ^ (z >> 31)) & 1);
+}
+
 struct Genotypes {
   static constexpr const char* kind = "genotypes";
   int M = 0, N = 0;        // SNPs, individuals
-  std::vector<uint8_t> G;  // M x N, SNP-major; 0/1/2 = copies of the second allele, 3 = missing
+  size_t bpr = 0;          // bytes per packed row, (N + 3) / 4
+  std::vector<uint8_t> G;  // M x bpr, SNP-major, packed (see above)
   std::vector<int> nobs;   // non-missing genotypes per individual
-  const uint8_t* row(int j) const { return G.data() + (size_t)j * N; }
+  bool haploid = false;    // pseudohaploid: one allele per entry, g = 0/1 (read_bed with pseudohaploid = true)
+  int ploidy() const { return haploid ? 1 : 2; }
+  void resize(int m, int n) {
+    M = m, N = n, bpr = ((size_t)n + 3) / 4;
+    G.assign((size_t)M * bpr, 0xFF);  // all missing
+  }
+  const uint8_t* row(int j) const { return G.data() + (size_t)j * bpr; }  // packed
+  uint8_t get(int j, int i) const { return (row(j)[i >> 2] >> ((i & 3) * 2)) & 3; }
+  void set(int j, int i, uint8_t g) {
+    uint8_t& b = G[(size_t)j * bpr + (i >> 2)];
+    const int s = (i & 3) * 2;
+    b = (uint8_t)((b & ~(3 << s)) | ((g & 3) << s));
+  }
+  // genotypes of individuals 0..N-1 of row j into out (N bytes)
+  void decode(int j, uint8_t* out) const {
+    const uint8_t* r = row(j);
+    for (int i = 0; i < N; i++) out[i] = GTAB.code[r[i >> 2]][i & 3];
+  }
   void count_observed() {
     nobs.assign(N, 0);
-    for (int j = 0; j < M; j++)
-      for (int i = 0; i < N; i++)
-        if (G[(size_t)j * N + i] != 3) nobs[i]++;
+    constexpr int CB = 256;  // bytes (1024 individuals) per task
+#pragma omp parallel for schedule(dynamic)
+    for (int b0 = 0; b0 < (int)bpr; b0 += CB) {
+      const int b1 = std::min((int)bpr, b0 + CB);
+      for (int j = 0; j < M; j++)
+        for (int b = b0; b < b1; b++) {
+          const uint8_t* c = GTAB.code[G[(size_t)j * bpr + b]];
+          for (int t = 0; t < 4 && 4 * b + t < N; t++) nobs[4 * b + t] += c[t] != 3;
+        }
+    }
   }
   double ll_offset() const { return 0; }  // constant added to the log-likelihood
 
@@ -45,7 +110,10 @@ struct Genotypes {
   // MODE 0: log-likelihood only; 1: EM ratios (A = r0 in place of h, B = r1); 2: Newton (A = d, B = w).
   // TB: element type of B (float for the single-precision Hessians, see Model::hess_float).
   static constexpr int LANES = 8, PER_LOG = 16, BLK = LANES * PER_LOG;
-  template <int MODE, class TB = double>
+  // HAP: pseudohaploid data (one allele per entry, g = 0/1): prob = h^g a^(1-g), r0 = (1-g)/(1-h); the other
+  // formulas are the same.
+  // g: packed genotypes of the row's entries (starting at a multiple of 4 individuals)
+  template <int MODE, class TB = double, bool HAP = false>
   [[gnu::always_inline]]  // inlined into each CPU version of the tile kernels (kernel.hpp)
   static inline double row_pass(const uint8_t* __restrict g, double* __restrict A, TB* __restrict B, int n,
                                 double lo, double hi) {
@@ -53,10 +121,11 @@ struct Genotypes {
     for (int l = 0; l < LANES; l++) prod[l] = 1, ex[l] = 0;
     for (int c0 = 0; c0 < n; c0 += BLK) {
       const int cn = std::min(BLK, n - c0);
-      const uint8_t* gc = g + c0;
+      const uint8_t* gc = g + c0 / 4;
       double* Ac = A + c0;
       TB* Bc = MODE >= 1 ? B + c0 : nullptr;
-      for (int u = 0; u < cn; u++) gd[u] = gc[u];  // widened first: the main loop then has one element type
+      for (int b = 0; b < (cn + 3) / 4; b++)  // unpacked and widened first: the main loop has one element type
+        std::memcpy(gd + 4 * b, GTAB.val[gc[b]], 4 * sizeof(double));
 #pragma omp simd
       for (int u = 0; u < cn; u++) {
         double h = Ac[u];
@@ -65,8 +134,8 @@ struct Genotypes {
         const double a = 1 - h, inv = 1 / (h * a), ih = a * inv, ia = h * inv;
         const double g = gd[u];
         const bool obs = g < 2.5;
-        const double gg = obs ? g : 0.0, cc = obs ? 2.0 - g : 0.0;
-        const double x1 = g > 0.5 ? h : a, x2 = g > 1.5 ? h : a;
+        const double gg = obs ? g : 0.0, cc = obs ? (HAP ? 1.0 : 2.0) - g : 0.0;
+        const double x1 = g > 0.5 ? h : a, x2 = HAP ? 1.0 : g > 1.5 ? h : a;
         pr[u] = obs ? x1 * x2 : 1.0;
         if (MODE >= 1) {
           const double r1 = gg * ih, r0 = cc * ia;
@@ -97,47 +166,70 @@ struct Genotypes {
   // log-likelihood of the tile H (jn x in) of sites j0.., individuals i0.. (all: no effect for genotypes,
   // whose missing entries carry no likelihood)
   ADMIXER_KERNEL double tile_ll(int j0, int jn, int i0, int in, const double* H, double lo, double hi, bool = false) const {
+    assert(i0 % 4 == 0);  // a tile starts at a byte of the packed rows
     double ll = 0;
     for (int jj = 0; jj < jn; jj++) {
-      ll += row_pass<0, double>(row(j0 + jj) + i0, const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi);  // reads only
+      ll += haploid ? row_pass<0, double, true>(row(j0 + jj) + i0 / 4, const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi)
+                    : row_pass<0, double>(row(j0 + jj) + i0 / 4, const_cast<double*>(H) + (size_t)jj * in, nullptr, in, lo, hi);  // reads only
     }
     return ll;
   }
   // EM ratios: on exit R1 = g/h, R0 = (2-g)/(1-h) (0 for missing). R0 holds h on entry. Returns log L.
   ADMIXER_KERNEL double tile_em(int j0, int jn, int i0, int in, double* R0, double* R1, double lo, double hi) const {
+    assert(i0 % 4 == 0);  // a tile starts at a byte of the packed rows
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)
-      ll += row_pass<1>(row(j0 + jj) + i0, R0 + (size_t)jj * in, R1 + (size_t)jj * in, in, lo, hi);
+      ll += haploid ? row_pass<1, double, true>(row(j0 + jj) + i0 / 4, R0 + (size_t)jj * in, R1 + (size_t)jj * in, in, lo, hi)
+                    : row_pass<1>(row(j0 + jj) + i0 / 4, R0 + (size_t)jj * in, R1 + (size_t)jj * in, in, lo, hi);
     return ll;
   }
   // Newton quantities: on exit T = d = dlogL/dh, W = w = -d2logL/dh2 (0 for missing). T holds h on entry.
   ADMIXER_KERNEL double tile_wd(int j0, int jn, int i0, int in, double* T, double* W, double lo, double hi) const {
+    assert(i0 % 4 == 0);  // a tile starts at a byte of the packed rows
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)
-      ll += row_pass<2>(row(j0 + jj) + i0, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);
+      ll += haploid ? row_pass<2, double, true>(row(j0 + jj) + i0 / 4, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi)
+                    : row_pass<2>(row(j0 + jj) + i0 / 4, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);
     return ll;
   }  // the same with w in single precision (Hessian matrix products in float, Model::hess_float)
   ADMIXER_KERNEL double tile_wd(int j0, int jn, int i0, int in, double* T, float* W, double lo, double hi) const {
+    assert(i0 % 4 == 0);  // a tile starts at a byte of the packed rows
     double ll = 0;
     for (int jj = 0; jj < jn; jj++)
-      ll += row_pass<2, float>(row(j0 + jj) + i0, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);
+      ll += haploid ? row_pass<2, float, true>(row(j0 + jj) + i0 / 4, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi)
+                    : row_pass<2, float>(row(j0 + jj) + i0 / 4, T + (size_t)jj * in, W + (size_t)jj * in, in, lo, hi);
     return ll;
   }
-  // Reorders the sites: row j becomes row perm[j] of the input.
+  // Reorders the sites: row j becomes row perm[j] of the input. In place (cycle by cycle, one row buffer), so
+  // that the genotypes never exist twice.
   void permute(const std::vector<int>& perm) {
-    std::vector<uint8_t> G2((size_t)M * N);
-#pragma omp parallel for schedule(static)
-    for (int j = 0; j < M; j++) std::copy(row(perm[j]), row(perm[j]) + N, G2.begin() + (size_t)j * N);
-    G.swap(G2);
+    std::vector<char> done(M, 0);
+    std::vector<uint8_t> tmp(bpr);
+    for (int s = 0; s < M; s++) {
+      if (done[s]) continue;
+      std::memcpy(tmp.data(), row(s), bpr);
+      int j = s;
+      for (;;) {  // row j takes row perm[j]; the cycle closes when perm[j] = s
+        done[j] = 1;
+        const int k = perm[j];
+        if (k == s) {
+          std::memcpy(G.data() + (size_t)j * bpr, tmp.data(), bpr);
+          break;
+        }
+        std::memcpy(G.data() + (size_t)j * bpr, row(k), bpr);
+        j = k;
+      }
+    }
   }
   // Supervised start: P_jk = allele frequency among the individuals labelled k (label[i] = -1: unknown),
   // with a +0.5 / +1 pseudo-count; columns without labelled data are left as they are.
   void supervised_start(const std::vector<int>& label, int K, double* P, double lo, double hi) const {
+    std::vector<uint8_t> g(N);
     for (int j = 0; j < M; j++) {
-      const uint8_t* g = row(j);
+      decode(j, g.data());
       std::vector<double> s(K, 0.0), n(K, 0.0);
       for (int i = 0; i < N; i++)
-        if (label[i] >= 0 && g[i] != 3) s[label[i]] += g[i], n[label[i]] += 2;
+        if (label[i] >= 0 && g[i] != 3) s[label[i]] += g[i], n[label[i]] += ploidy();
       for (int k = 0; k < K; k++)
         if (n[k] > 0) P[(size_t)j * K + k] = std::min(std::max((s[k] + 0.5) / (n[k] + 1), lo), hi);
     }
@@ -171,32 +263,49 @@ inline int count_lines(const std::string& fn) {
 
 // PLINK binary genotypes. Genotypes count copies of the second allele (A2, .bim column 6), so that
 // .P holds the frequency of the same allele as ADMIXTURE's .P.
-inline Genotypes read_bed(const std::string& bed) {
+// pseudohaploid: one allele per entry (homozygous calls their allele, heterozygous calls het_allele);
+// *nhet = heterozygous calls.
+inline Genotypes read_bed(const std::string& bed, bool pseudohaploid = false, size_t* nhet = nullptr) {
   const std::string prefix = strip_extension(bed);
   Genotypes D;
-  D.M = count_lines(prefix + ".bim");
-  D.N = count_lines(prefix + ".fam");
+  D.haploid = pseudohaploid;
+  size_t het = 0;
+  D.resize(count_lines(prefix + ".bim"), count_lines(prefix + ".fam"));
   FILE* fp = std::fopen(bed.c_str(), "rb");
   if (!fp) throw std::runtime_error("cannot open " + bed);
   unsigned char magic[3];
   if (std::fread(magic, 1, 3, fp) != 3 || magic[0] != 0x6c || magic[1] != 0x1b || magic[2] != 0x01)
     throw std::runtime_error(bed + " is not a SNP-major PLINK .bed file");
-  static const uint8_t decode[4] = {0, 3, 1, 2};  // 00 hom A1, 01 missing, 10 het, 11 hom A2
-  const size_t bpr = (D.N + 3) / 4;
-  std::vector<unsigned char> buf(bpr);
-  D.G.resize((size_t)D.M * D.N);
+  const size_t bpr = D.bpr;
+  const int tail = D.N % 4;  // padding bits of a row's last byte are set to 3 (missing)
+  const uint8_t pad = tail ? (uint8_t)(0xFF << (2 * tail)) : 0;
   for (int j = 0; j < D.M; j++) {
-    if (std::fread(buf.data(), 1, bpr, fp) != bpr) throw std::runtime_error(bed + " is truncated");
-    uint8_t* g = D.G.data() + (size_t)j * D.N;
-    for (int i = 0; i < D.N; i++) g[i] = decode[(buf[i >> 2] >> ((i & 3) * 2)) & 3];
+    uint8_t* g = D.G.data() + (size_t)j * bpr;
+    if (std::fread(g, 1, bpr, fp) != bpr) throw std::runtime_error(bed + " is truncated");
+    if (pseudohaploid) {
+      for (size_t b = 0; b < bpr; b++) {
+        const uint8_t raw = g[b];
+        g[b] = GTAB.from_bed_hap[raw];
+        if (GTAB.nhet[raw]) {
+          het += GTAB.nhet[raw];
+          for (int t = 0; t < 4; t++)
+            if (((raw >> (2 * t)) & 3) == 2)
+              g[b] = (uint8_t)((g[b] & ~(3 << (2 * t))) | het_allele(j + 1, 4 * b + t + 1) << (2 * t));
+        }
+      }
+    } else {
+      for (size_t b = 0; b < bpr; b++) g[b] = GTAB.from_bed[g[b]];
+    }
+    g[bpr - 1] |= pad;
   }
   std::fclose(fp);
   D.count_observed();
+  if (nhet) *nhet = het;
   return D;
 }
 
-inline Genotypes read_genotypes(const std::string& file) {
-  if (ends_with(file, ".bed")) return read_bed(file);
+inline Genotypes read_genotypes(const std::string& file, bool pseudohaploid = false, size_t* nhet = nullptr) {
+  if (ends_with(file, ".bed")) return read_bed(file, pseudohaploid, nhet);
   throw std::runtime_error("input must be a PLINK .bed file (with .bim and .fam): " + file);
 }
 

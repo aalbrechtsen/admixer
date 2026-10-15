@@ -165,6 +165,22 @@ ok "plink -P: exit code 0" "a == 0" "$(cat plink_proj.rc)"
 read -r qmax qms qrmse < <("$ROOT/tests/qdist" plink_proj.3.Q plink.3.Q 3)
 ok "plink -P: Q from the fixed P equals the joint fit (max |dQ| < 1e-3)" "a < 1e-3" "$qmax"
 rm -f sim.3.P.in
+# pseudohaploid: one allele per entry (heterozygous calls: an allele from a fixed hash of SNP and individual)
+run plink_hap sim.bed 3 -s 1 --pseudohaploid
+ok "plink --pseudohaploid: exit code 0" "a == 0" "$(cat plink_hap.rc)"
+refcheck plink_hap plink_hap.3.log
+read -r kp kq < <(kkt_of plink_hap.3.log)
+ok "plink --pseudohaploid: KKT P < 1e-3" "a < 1e-3" "$kp"; ok "plink --pseudohaploid: KKT Q < 1e-5" "a < 1e-5" "$kq"
+formats plink_hap 3 200 4000
+ok "plink --pseudohaploid: heterozygous calls reported" "a == 1" "$(grep -c '^Pseudohaploid analysis: one allele per entry; [1-9]' plink_hap.3.log)"
+read -r qmax qms qrmse < <("$ROOT/tests/qdist" plink_hap.3.Q sim.true.Q 3)
+ok "plink --pseudohaploid: Q close to the truth (RMSE < 0.1)" "a < 0.1" "$qrmse"
+ok "plink --pseudohaploid: evalAdmix correlations ~0 under the correct model (|mean| < 0.01)" "a < 0.01 && a > -0.01" \
+  "$(awk '{for (i = 1; i <= NF; i++) if ($i != "nan" && $i != "NA") {s += $i; n++}} END{print s / n}' plink_hap.3.corres.txt)"
+run plink_hap_rep sim.bed 3 -s 1 --pseudohaploid
+ok "plink --pseudohaploid: same seed gives the same Q" "a == 0" "$(cmp -s plink_hap.3.Q plink_hap_rep.3.Q; echo $?)"
+run e4 sim.bed 3 --pseudohaploid --parental; ok "--pseudohaploid with --parental is rejected" "a != 0" "$(cat e4.rc)"
+run e5 sim_d3.beagle.gz 3 --pseudohaploid; ok "--pseudohaploid with beagle input is rejected" "a != 0" "$(cat e5.rc)"
 
 echo "== beagle input (GLs of the first 2000 SNPs: 3x depth; mixed 0.5-6x depth)"
 for d in d3 mixed; do

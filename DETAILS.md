@@ -137,6 +137,36 @@ comparable.
   log-likelihoods within 0.01, except where a pair with an ancestry below 0.01 is held fixed (0.3 log-units).
 * **Cost** (8 threads, Xeon Gold 6152): see the README. The paired Hessian costs (K(K+1)/2)² per genotype.
 
+## Pseudohaploid analysis (`--pseudohaploid`)
+
+Each entry is one allele x ∈ {0, 1} (copies of the second allele) with P(x = 1) = h = Σₖ qᵢₖ pⱼₖ, so the
+likelihood per entry is h^x (1 − h)^(1−x). The per-entry kernel is the diploid one with 1 in place of 2 in
+(2 − g), and the same Newton/QP, EM and quasi-Newton steps follow; for 0/2-coded data the haploid
+log-likelihood and gradient are exactly half of the diploid ones (unit test), so both give the same estimates.
+
+Heterozygous calls of diploid input are turned into one allele by `het_allele` (`src/io.hpp`): bit 0 of the
+splitmix64 hash of (SNP number, individual number), a fair coin that is independent between entries and the
+same in every run, without a seed. Then P(x = 1) = h² + ½·2h(1 − h) = h, as the model assumes. A rule shared
+between the individuals does not have this property. With "allele 1 at even, allele 2 at odd SNP numbers" every
+heterozygote of a SNP gets the same allele, so P(x = 1) = h² or 1 − (1 − h)²: for an unadmixed individual that
+is only another frequency, which P absorbs, but for an admixed one it differs from any mixture of the
+ancestries' values by ±qₐq_b(pₐ − p_b)², so Q is biased. Alternating by SNP and individual (or per individual
+from a random start) gives two groups of individuals whose heterozygotes always receive opposite alleles, and
+the fit uses ancestries for those groups. On simulated data (M = 100,000, N = 2,000, K = 5, Fst 0.05, Dirichlet
+0.5 admixture, 1,990 of 2,000 admixed; RMSE of Q against the truth):
+
+| analysis | RMSE of Q |
+|---|---|
+| diploid genotypes | 0.020 |
+| pseudohaploid, heterozygous calls by the hash (`--pseudohaploid`) | 0.029 |
+| truly pseudohaploid data (one random allele per call, coded 0/2), `--pseudohaploid` or diploid model | 0.029 |
+| heterozygous calls: allele 1 at even, allele 2 at odd SNP numbers | 0.042 |
+| heterozygous calls: alternating by SNP + individual number | 0.774 (odd and even individuals split) |
+
+evalAdmix needs the model variance of each individual's values: for genotypes it is estimated by the mean of
+g(2 − g), which is 0 for a single allele, so pseudohaploid runs use the mean of (x − h)² with the fitted h, as
+for genotype likelihoods. Parental and paired ancestry need both alleles and are not available.
+
 ## Advanced options
 
 Mainly for benchmarking: `--bound=X` (P in [X, 1 − X] and Q ≥ X; default 1e-5 for genotypes as ADMIXTURE,
@@ -179,6 +209,13 @@ H = P Qᵀ (BLAS), the per-entry likelihood terms, and the Hessians and gradient
   Their work buffers are kept between calls, and P tiles get smaller (down to 32 SNPs) when a batch has too
   few for the threads (0.2.7). Same results; at N = 50,000 or M = 500,000 with 44 threads the warm-up is up
   to 9 % and a run up to 6 % shorter.
+* **Memory:** the genotypes are kept packed, 2 bits per entry as in the `.bed` file (0.2.11; before, one byte),
+  and the SNP shuffle before the warm-up is done in place. At N = 50,000 and M = 100,000 (or N = 10,000 and
+  M = 500,000), K = 10, the peak memory fell from 9.8 GB to 1.9–2.1 GB; at N = M = 500,000 it would be ~65 GB
+  instead of ~500 GB. The per-entry step unpacks 4 genotypes per byte from a table, so the passes are not
+  slower, and reading a `.bed` file is faster (no decoding, no second copy): those runs took 10–14 % less time
+  with 44 threads (load 26 → 5 s, fit 3–5 % faster), and runs with M = 100,000, N = 2,000 the same time
+  (8 threads). Results are bit-identical.
 * Faster solvers for larger K were tried in October 2026 (warm-started QPs, reused Hessians, sparse Hessians
   for components with Q ≈ 0). They gave up to 15 % with few individuals and nothing at large N, so they were not
   adopted.

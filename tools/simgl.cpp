@@ -70,9 +70,10 @@ int main(int argc, char** argv) {
     line += '\n';
     gzwrite(fp, line.data(), line.size());
     char b[48];
+    std::vector<uint8_t> g(N);
     for (int j = 0; j < M; j++) {
       line = "site" + std::to_string(j + 1) + "\t0\t1";
-      const uint8_t* g = D.row(j);
+      D.decode(j, g.data());
       for (int i = 0; i < N; i++) {
         double l[3] = {1, 1, 1};
         if (g[i] != 3) {

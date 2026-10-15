@@ -62,8 +62,7 @@ constexpr int BL = 64;  // one cache line of a SNP's genotypes
 // genotype weights (G0, G1, G2) of individuals ids[0 .. nl) at SNP j (0 for missing entries and lanes >= nl)
 inline void lane_weights(const Genotypes& D, int j, const int* ids, int nl, double* w0, double* w1, double* w2) {
   alignas(64) uint8_t g[BL];
-  const uint8_t* row = D.row(j);
-  for (int l = 0; l < BL; l++) g[l] = l < nl ? row[ids[l]] : 3;
+  for (int l = 0; l < BL; l++) g[l] = l < nl ? D.get(j, ids[l]) : 3;
 #pragma omp simd
   for (int l = 0; l < BL; l++) w0[l] = g[l] == 0, w1[l] = g[l] == 1, w2[l] = g[l] == 2;
 }

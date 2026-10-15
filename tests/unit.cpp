@@ -100,9 +100,9 @@ int main() {
   // 2. both models on small random data
   const int M = 60, N = 25;
   Genotypes G;
-  G.M = M, G.N = N;
-  G.G.resize((size_t)M * N);
-  for (auto& g : G.G) g = U(rng) < 0.05 ? 3 : (uint8_t)(3 * U(rng));
+  G.resize(M, N);
+  for (int j = 0; j < M; j++)
+    for (int i = 0; i < N; i++) G.set(j, i, U(rng) < 0.05 ? 3 : (uint8_t)(3 * U(rng)));
   G.count_observed();
   GLData L;
   L.M = M, L.N = N;
@@ -115,8 +115,96 @@ int main() {
   L.nobs.assign(N, 0);
   for (size_t u = 0; u < L.keep.size(); u++) L.nobs[u % N] += L.keep[u];
   model_checks(G, "genotype", rng);
+  // pseudohaploid: one allele per entry (0/1); the same model checks, and diploid data with homozygous calls only
+  // (g = 0/2) must have exactly twice the haploid log-likelihood and gradient
+  Genotypes H, G02;
+  H.resize(M, N), G02.resize(M, N);
+  H.haploid = true;
+  for (int j = 0; j < M; j++)
+    for (int i = 0; i < N; i++) {
+      const uint8_t a = U(rng) < 0.05 ? 3 : (uint8_t)(U(rng) < 0.4);
+      H.set(j, i, a), G02.set(j, i, a == 3 ? 3 : 2 * a);
+    }
+  H.count_observed(), G02.count_observed();
+  model_checks(H, "pseudohaploid", rng);
+  {
+    Model<Genotypes> mh(H, 3), md(G02, 3);
+    std::vector<double> x(mh.size()), gh(mh.size()), gd(mh.size());
+    for (size_t t = 0; t < mh.nP; t++) x[t] = 0.1 + 0.8 * U(rng);
+    for (int i = 0; i < N; i++) {
+      double s = 0;
+      for (int k = 0; k < 3; k++) s += (x[mh.nP + i * 3 + k] = 0.1 + U(rng));
+      for (int k = 0; k < 3; k++) x[mh.nP + i * 3 + k] /= s;
+    }
+    const double lh = mh.loglik(x.data()), ld = md.loglik(x.data());
+    check(std::fabs(ld - 2 * lh) < 1e-9 * std::fabs(ld), "pseudohaploid: 0/2 genotypes have 2x the log-likelihood",
+          std::fabs(ld - 2 * lh));
+    mh.gradient(x.data(), gh.data());
+    md.gradient(x.data(), gd.data());
+    double mx = 0;
+    for (size_t t = 0; t < gh.size(); t++) mx = std::max(mx, std::fabs(gd[t] - 2 * gh[t]) / (1 + std::fabs(gd[t])));
+    check(mx < 1e-9, "pseudohaploid: 0/2 genotypes have 2x the gradient", mx);
+  }
   L.exact_hess = true;
   model_checks(L, "genotype likelihood", rng);
+
+  // reading a .bed: diploid codes and the pseudohaploid alleles; het_allele is a fair, independent coin
+  {
+    const int Mb = 4, Nb = 6;
+    const uint8_t gt[Mb][Nb] = {{0, 1, 2, 3, 1, 2}, {1, 1, 0, 2, 3, 1}, {2, 2, 2, 1, 0, 0}, {3, 1, 1, 1, 2, 0}};
+    const uint8_t enc[4] = {0, 2, 3, 1};  // genotype (copies of A2; 3 missing) -> PLINK code
+    const std::string pre = "unit_tmp";  // in the working directory, removed below
+    {
+      std::FILE* f = std::fopen((pre + ".bed").c_str(), "wb");
+      if (!f) {
+        std::printf("cannot write %s.bed\n", pre.c_str());
+        std::exit(1);
+      }
+      const uint8_t magic[3] = {0x6c, 0x1b, 0x01};
+      std::fwrite(magic, 1, 3, f);
+      for (int j = 0; j < Mb; j++)
+        for (int b = 0; b < (Nb + 3) / 4; b++) {
+          uint8_t c = 0;
+          for (int t = 0; t < 4 && 4 * b + t < Nb; t++) c |= enc[gt[j][4 * b + t]] << (2 * t);
+          std::fputc(c, f);
+        }
+      std::fclose(f);
+      std::FILE* bim = std::fopen((pre + ".bim").c_str(), "w");
+      for (int j = 0; j < Mb; j++) std::fprintf(bim, "1 s%d 0 %d A C\n", j + 1, j + 1);
+      std::fclose(bim);
+      std::FILE* fam = std::fopen((pre + ".fam").c_str(), "w");
+      for (int i = 0; i < Nb; i++) std::fprintf(fam, "f i%d 0 0 0 -9\n", i);
+      std::fclose(fam);
+    }
+    const Genotypes dg = read_bed(pre + ".bed");
+    size_t nhet = 0;
+    const Genotypes hg = read_bed(pre + ".bed", true, &nhet);
+    int bad_d = 0, bad_h = 0, het = 0;
+    for (int j = 0; j < Mb; j++)
+      for (int i = 0; i < Nb; i++) {
+        const uint8_t g = gt[j][i];
+        bad_d += dg.get(j, i) != g;
+        const uint8_t want = g == 3 ? 3 : g == 1 ? het_allele(j + 1, i + 1) : g / 2;
+        bad_h += hg.get(j, i) != want;
+        het += g == 1;
+      }
+    check(bad_d == 0, "read_bed: diploid genotypes", bad_d);
+    check(bad_h == 0 && hg.haploid, "read_bed: pseudohaploid alleles (het: het_allele)", bad_h);
+    check(nhet == (size_t)het, "read_bed: heterozygous calls counted", std::fabs((double)nhet - het));
+    for (const char* e : {".bed", ".bim", ".fam"}) std::remove((pre + e).c_str());
+    // het_allele: about half A2 overall, and no pattern shared between neighbouring individuals or SNPs
+    long ones = 0, same_i = 0, same_j = 0;
+    const int S = 2000;
+    for (int j = 1; j <= S; j++)
+      for (int i = 1; i <= S; i++) {
+        const uint8_t a = het_allele(j, i);
+        ones += a, same_i += a == het_allele(j, i + 1), same_j += a == het_allele(j + 1, i);
+      }
+    const double n = (double)S * S;
+    check(std::fabs(ones / n - 0.5) < 0.002 && std::fabs(same_i / n - 0.5) < 0.002 && std::fabs(same_j / n - 0.5) < 0.002,
+          "het_allele: fair and independent between neighbours",
+          std::max({std::fabs(ones / n - 0.5), std::fabs(same_i / n - 0.5), std::fabs(same_j / n - 0.5)}));
+  }
 
   // 3. certain GLs = genotypes
   std::printf("certain GLs vs genotypes\n");
@@ -127,8 +215,9 @@ int main() {
     C.keep.assign((size_t)M * N, 1);
     int nhet = 0;
     for (size_t u = 0; u < C.keep.size(); u++) {
-      if (G.G[u] == 3) C.keep[u] = 0, C.gl[3 * u] = C.gl[3 * u + 1] = C.gl[3 * u + 2] = 1;
-      else C.gl[3 * u + G.G[u]] = 1, nhet += G.G[u] == 1;
+      const uint8_t g = G.get(u / N, u % N);
+      if (g == 3) C.keep[u] = 0, C.gl[3 * u] = C.gl[3 * u + 1] = C.gl[3 * u + 2] = 1;
+      else C.gl[3 * u + g] = 1, nhet += g == 1;
     }
     C.nobs = G.nobs;
     Model<Genotypes> mg(G, 3);
@@ -156,8 +245,7 @@ int main() {
       for (int k = 0; k < K2; k++) x2[(size_t)M2 * K2 + i * K2 + k] /= s;
     }
     Genotypes Gf;
-    Gf.M = M2, Gf.N = N2;
-    Gf.G.resize((size_t)M2 * N2);
+    Gf.resize(M2, N2);
     GLData Cf;
     Cf.M = M2, Cf.N = N2;
     Cf.gl.assign((size_t)M2 * N2 * 3, 0.f);
@@ -167,7 +255,7 @@ int main() {
         double h = 0;
         for (int k = 0; k < K2; k++) h += x2[(size_t)M2 * K2 + i * K2 + k] * x2[(size_t)j * K2 + k];
         const int g = (U(rng) < h) + (U(rng) < h);
-        Gf.G[(size_t)j * N2 + i] = g;
+        Gf.set(j, i, g);
         Cf.gl[((size_t)j * N2 + i) * 3 + g] = 1;
       }
     Gf.count_observed();
@@ -178,11 +266,11 @@ int main() {
       for (int i = 0; i < N2; i++) {
         double h = 0;
         for (int k = 0; k < K2; k++) h += x2[(size_t)M2 * K2 + i * K2 + k] * x2[(size_t)j * K2 + k];
-        const double r = Gf.G[(size_t)j * N2 + i] - 2 * h;
+        const double r = Gf.get(j, i) - 2 * h;
         dgl[i] += r * r / M2;
       }
     const auto cg = evaladmix_core(M2, N2, x2.data() + (size_t)M2 * K2, K2, dgl, 1, [&](int j0, int jn, double* X, uint8_t* O) {
-      for (size_t t = 0; t < (size_t)jn * N2; t++) X[t] = Gf.G[(size_t)j0 * N2 + t], O[t] = 1;
+      for (size_t t = 0; t < (size_t)jn * N2; t++) X[t] = Gf.get(j0 + t / N2, t % N2), O[t] = 1;
     });
     const auto cl = evaladmix_gl(Cf, x2.data(), x2.data() + (size_t)M2 * K2, K2, 0.05, 1e-9, 1 - 1e-9, 1);
     double me = 0;

@@ -24,7 +24,7 @@ Details beyond everyday use (algorithms, performance, testing, differences from 
 
 Nothing else needs to be installed: OpenBLAS, zlib and the C++/OpenMP runtimes are built in. It runs on any
 x86_64 Linux with glibc 2.28 or newer (RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 10+), and uses AVX2 or
-AVX-512 when the CPU has it. The binary in `bin/` is the current version (0.2.10).
+AVX-512 when the CPU has it. The binary in `bin/` is the current version (0.2.11).
 
 ```
 wget https://github.com/aalbrechtsen/admixer/raw/main/bin/admixer-linux-x86_64.tar.gz
@@ -101,6 +101,7 @@ extension (`data`) as prefix:
 | `--no-P` | do not write the P matrix (e.g. for benchmarks) |
 | `--supervised` | supervised analysis; reads `data.pop` (one line per individual: a population name, or `-` if unknown). Labelled individuals are held at their population; K must equal the number of population names, and columns follow the order of first appearance in `data.pop` |
 | `-P` | projection; reads `data.K.P.in` (or `data.K.P.in.gz`) and estimates Q with P held fixed |
+| `--pseudohaploid` | PLINK input: one allele per individual and SNP (pseudohaploid calls, inbred individuals, X chromosome); see below |
 | `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
@@ -129,6 +130,21 @@ most `--max_runs` runs. The output files are those of the best run, and `data.K.
 
 Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... until 3 runs agree
 (at most 10 runs).
+
+### Pseudohaploid data
+
+`--pseudohaploid` fits the model to one allele per individual and SNP, the usual analysis of ancient DNA with
+pseudohaploid calls, and also an option for inbred individuals or the X chromosome. The `.bed` can be coded
+pseudohaploid (0/2) or diploid (0/1/2): a homozygous call gives its allele, and a heterozygous call gives a
+random allele, drawn by a fixed hash of the SNP and individual numbers (lines of the `.bim` and `.fam`). So the
+result does not depend on `--seed` and is the same in every run. P is the frequency of the second allele, as
+usual; the log-likelihood is that of the haploid model (half that of 0/2 data analysed as diploid, which gives
+the same estimates). Not with `--parental`, `--paired` or `--from`. The draw has to be independent between
+individuals: giving all heterozygotes of a SNP the same allele (e.g. allele 1 at even and allele 2 at odd SNP
+numbers) biases Q of admixed individuals, and alternating patterns shared between individuals create artificial
+clusters ([DETAILS.md](DETAILS.md#pseudohaploid-analysis---pseudohaploid)).
+
+Example: `admixer data.bed 4 -j8 --pseudohaploid`
 
 ### Parental and paired ancestry
 

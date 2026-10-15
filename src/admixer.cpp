@@ -27,7 +27,7 @@
 #include "multistart.hpp"
 #include "parental.hpp"
 
-static const char* VERSION = "0.2.10";
+static const char* VERSION = "0.2.11";
 
 static void usage(int code) {
   std::printf(
@@ -50,6 +50,12 @@ static void usage(int code) {
       "                      a population name, or '-' if unknown); labelled individuals are held at\n"
       "                      their population; K must equal the number of population names\n"
       "  -P                  projection: reads inputBasename.K.P.in (or .P.in.gz) and estimates Q with P fixed\n"
+      "  --pseudohaploid     PLINK input: one allele per individual and SNP (ancient DNA pseudohaploid calls,\n"
+      "                      inbred individuals, X chromosome); homozygous calls (0/2) give that allele, and\n"
+      "                      heterozygous calls a random allele from a fixed hash of the SNP and individual\n"
+      "                      numbers (the same in every run, independent of --seed). P is the frequency of A2\n"
+      "                      as usual; log-likelihoods are those of the haploid model. Not with --parental or\n"
+      "                      --paired\n"
       "  --no-evaladmix      do not write NAME.K.corres.txt, the evalAdmix correlation of residuals\n"
       "                      (corrected estimator of van Waaij et al. 2023, for GLs on the posterior expected\n"
       "                      genotypes; plot with evalAdmix's visFuns.R). It needs memory ~ 48 N^2 bytes, so it\n"
@@ -105,7 +111,7 @@ struct Options {
   int prime = -1, minibatch = -1;        // < 0: the data type's default
   std::string input, prefix, out, hess = "exact";
   bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true, write_P = true;
-  bool smallk = true, parental = false, paired = false;
+  bool smallk = true, parental = false, paired = false, pseudohaploid = false;
   std::string from;  // --from: P and Q of an earlier run, no fit
   std::string thread_note;  // why -j was capped, or that it exceeds the physical cores (printed in the log)  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
@@ -153,7 +159,7 @@ static void post_fit(const Data& D, Options& o, const Model<Data>& m, const Vec&
     const double te = omp_get_wtime();
     std::vector<double> cor;
     if constexpr (std::is_same_v<Data, Genotypes>)
-      cor = evaladmix_corrected(D, x.data() + m.nP, K, o.threads);
+      cor = evaladmix_corrected(D, x.data(), x.data() + m.nP, K, o.threads);
     else
       cor = evaladmix_gl(D, x.data(), x.data() + m.nP, K, o.glf.misTol, m.PMIN, m.PMAX, o.threads);
     write_corres(pre + ".corres.txt", cor, D.N);
@@ -366,6 +372,7 @@ int main(int argc, char** argv) {
     else if (s == "--parental") o.parental = true;
     else if (s.rfind("--from", 0) == 0) o.from = opt_value(argc, argv, a, "--from");
     else if (s == "--paired") o.paired = true;
+    else if (s == "--pseudohaploid") o.pseudohaploid = true;
     else if (s == "--no-gzip") o.gz = false;
     else if (s == "--no-P") o.write_P = false;
     else if (s == "--keep-missing") o.glf.skip_missing = false;
@@ -417,6 +424,11 @@ int main(int argc, char** argv) {
   }
   fs.seed = seed_s == "time" ? (unsigned long)std::time(nullptr) : std::strtoul(seed_s.c_str(), nullptr, 10);
   const bool gl = is_beagle(o.input);
+  if (o.pseudohaploid && (gl || o.parental || o.paired || !o.from.empty())) {
+    std::fprintf(stderr, "--pseudohaploid needs PLINK input and cannot be combined with --parental, --paired or --from "
+                         "(both parents' alleles are not observed)\n");
+    return 1;
+  }
   o.prefix = gl ? input_prefix(o.input) : strip_extension(o.input);
   if (o.out.empty()) {
     const size_t slash = o.prefix.find_last_of('/');
@@ -464,7 +476,11 @@ int main(int argc, char** argv) {
         say("Missing GL entries are used as data (--keep-missing)\n");
       analyse(D, o, t0);
     } else {
-      Genotypes D = read_genotypes(o.input);
+      size_t nhet = 0;
+      Genotypes D = read_genotypes(o.input, o.pseudohaploid, &nhet);
+      if (o.pseudohaploid)
+        say("Pseudohaploid analysis: one allele per entry; %zu heterozygous calls (%.3f%% of all) set to a random "
+            "allele (fixed hash of SNP and individual number)\n", nhet, 100.0 * nhet / ((double)D.M * D.N));
       analyse(D, o, t0);
     }
     say("Log written to %s\n", logname.c_str());
