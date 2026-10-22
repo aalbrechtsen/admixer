@@ -154,6 +154,24 @@ run plink_conv sim.bed 3 -s 1 --conv 2 -m 4
 ok "plink --conv: converged" "a == 1" "$(grep -c '^Converged: ' plink_conv.3.log)"
 ok "plink --conv: table has one row per run" "a >= 3" "$(nrows plink_conv.3.conv)"
 ok "plink --conv: best run >= single run" "a >= b - $LLTOL" "$(ll_of plink_conv.3.log)" "$(ll_of plink.3.log)"
+# --Qin/--Pin: continuing a converged run stays at its optimum
+run plink_qin sim.bed 3 --Qin=plink.3.Q --no-evaladmix
+ok "plink --Qin: exit code 0" "a == 0" "$(cat plink_qin.rc)"
+ok "plink --Qin: same optimum as the run it continues (|dll| < 0.01)" "a < 0.01 && a > -0.01" \
+  "$(awk -v a="$(ll_of plink_qin.3.log)" -v b="$(ll_of plink.3.log)" 'BEGIN{print a-b}')"
+run plink_qpin sim.bed 3 --Qin=plink.3.Q --Pin=plink.3.P.gz --no-evaladmix
+ok "plink --Qin --Pin: same optimum, few iterations" "a < 0.01 && a > -0.01 && b <= 5" \
+  "$(awk -v a="$(ll_of plink_qpin.3.log)" -v b="$(ll_of plink.3.log)" 'BEGIN{print a-b}')" "$(iters_of plink_qpin.3.log)"
+run e6 sim.bed 3 --Pin=plink.3.P.gz; ok "--Pin without --Qin is rejected" "a != 0" "$(cat e6.rc)"
+run e7 sim.bed 3 --search --conv 2; ok "--search with --conv is rejected" "a != 0" "$(cat e7.rc)"
+# --search: split-merge moves within a budget of standard runs
+run plink_search sim.bed 3 -s 1 --search=4 --no-evaladmix
+ok "plink --search: exit code 0" "a == 0" "$(cat plink_search.rc)"
+ok "plink --search: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search.3.log)" "$(ll_of plink.3.log)"
+ok "plink --search: move table has a header and the refits" "a >= 3" "$(nrows plink_search.3.search)"
+formats plink_search 3 200 4000
+run plink_search_rep sim.bed 3 -s 1 --search=4 --no-evaladmix
+ok "plink --search: same seed, same Q" "a == 0" "$(cmp -s plink_search.3.Q plink_search_rep.3.Q; echo $?)"
 run plink_sup --supervised sim.bed 3 -s 1
 ok "plink --supervised: exit code 0" "a == 0" "$(cat plink_sup.rc)"
 refcheck plink_sup plink_sup.3.log
@@ -230,6 +248,12 @@ ok "beagle -P: Q from the fixed P equals the joint fit (max |dQ| < 1e-3)" "a < 1
 rm -f sim_d3.3.P.in
 run bgl_conv sim_d3.beagle.gz 3 -s 1 --conv 2 -m 4
 ok "beagle --conv: converged" "a == 1" "$(grep -c '^Converged: ' bgl_conv.3.log)"
+run bgl_search sim_d3.beagle.gz 3 -s 1 --search=4 --no-evaladmix
+ok "beagle --search: exit code 0" "a == 0" "$(cat bgl_search.rc)"
+ok "beagle --search: log L >= single run" "a >= b - $LLTOL" "$(ll_of bgl_search.3.log)" "$(ll_of bgl_d3.3.log)"
+run bgl_qin sim_d3.beagle.gz 3 --Qin=bgl_d3.3.Q --Pin=bgl_d3.3.P.gz --no-evaladmix
+ok "beagle --Qin --Pin: same optimum (|dll| < 0.01)" "a < 0.01 && a > -0.01" \
+  "$(awk -v a="$(ll_of bgl_qin.3.log)" -v b="$(ll_of bgl_d3.3.log)" 'BEGIN{print a-b}')"
 
 if [ $UPDATE = 1 ]; then cp "$NEW" "$EXP"; echo "reference results written to tests/expected.tsv"; fi
 T=$(awk -v a="$T0" -v b="$(date +%s.%N)" 'BEGIN{printf "%.0f", b-a}')

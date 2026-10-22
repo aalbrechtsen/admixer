@@ -105,6 +105,9 @@ extension (`data`) as prefix:
 | `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
+| `--search[=X]` | search for a better optimum by split-merge moves, within a budget of X standard runs (default 20); see below |
+| `--Qin=FILE` | start from this Q (e.g. `NAME.K.Q` of an earlier run) instead of a random start; P is fitted to it |
+| `--Pin=FILE` | with `--Qin`: start from this P as well (`NAME.K.P.gz` or `.P`; for beagle input, the sites kept by the same filters) |
 | `--no-evaladmix` | do not compute the evalAdmix correlation of residuals |
 | `--evaladmix` | compute it even for more than 20,000 individuals |
 | `--parental` | also estimate the parents' admixture proportions (`data.K.parental`) |
@@ -130,6 +133,22 @@ most `--max_runs` runs. The output files are those of the best run, and `data.K.
 
 Example: `admixer --seed=30 --conv 3 data.bed 8` uses seeds 30, 31, 32, ... until 3 runs agree
 (at most 10 runs).
+
+### Search for a better optimum (hard data)
+
+On hard data (many local optima, often at large K), every random start can end at a different optimum, and
+many more starts rarely find the best one. `--search` starts from one random start and then tries split-merge
+moves: merge two components with similar allele frequencies, split another component in two
+(along the first principal component of its individuals' genotypes), and refit. A move is kept if it raises
+the log-likelihood. The moves change which populations share a component in one step, which a random start
+rarely gets right. `--search=X` sets the budget in standard runs (default 20; the run takes about X times as
+long as a standard run). `data.K.search` lists every move tried. Details:
+[DETAILS.md](DETAILS.md#split-merge-search---search).
+
+Example: `admixer --search data.bed 11`
+
+To continue an earlier solution, use `--Qin=data.11.Q` (and `--Pin=data.11.P.gz`); with `--search` the search
+starts from it.
 
 ### Pseudohaploid data
 

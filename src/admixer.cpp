@@ -26,6 +26,7 @@
 #include "model.hpp"
 #include "multistart.hpp"
 #include "parental.hpp"
+#include "search.hpp"
 
 static const char* VERSION = "0.2.11";
 
@@ -69,6 +70,13 @@ static void usage(int code) {
       "  --from=PREFIX       no fit: read P and Q of an earlier run (PREFIX.K.P[.gz], PREFIX.K.Q) and write\n"
       "                      NAME.K.parental (unless --paired alone is given), --paired and --evaladmix outputs\n"
       "                      only; the log goes to NAME.K.from.log. Use the same input and filters as that run\n"
+      "  --search[=X]        search for a better optimum by split-merge moves (merge two components, split\n"
+      "                      another), within a budget of X standard runs (default 20); writes NAME.K.search\n"
+      "                      (every move tried). For hard data (many local optima, large K); see DETAILS.md\n"
+      "  --Qin=FILE          start from this Q (N x K, e.g. NAME.K.Q of an earlier run) instead of a random\n"
+      "                      start; P is fitted to it (20 EM steps with Q fixed) unless --Pin is given\n"
+      "  --Pin=FILE          with --Qin: start from this P (M x K, NAME.K.P[.gz]; GLs: the sites kept by the\n"
+      "                      same filters)\n"
       "  --conv X            convergence test with several starts (seeds seed, seed+1, ...): stop when X runs\n"
       "                      agree with the best run (highest likelihood); writes the best run and NAME.K.conv\n"
       "  -m X, --max_runs=X  with --conv: at most X runs (default 10)\n"
@@ -113,6 +121,9 @@ struct Options {
   bool supervised = false, projection = false, evaladmix = true, evaladmix_forced = false, gz = true, write_P = true;
   bool smallk = true, parental = false, paired = false, pseudohaploid = false;
   std::string from;  // --from: P and Q of an earlier run, no fit
+  std::string qin, pin;  // --Qin/--Pin: start from this Q (and P)
+  SearchSettings ss;
+  bool search = false;  // --search
   std::string thread_note;  // why -j was capped, or that it exceeds the physical cores (printed in the log)  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
 
@@ -267,6 +278,15 @@ static void analyse(Data& D, Options& o, double t0) {
     m.pfix = true;
     say("Projection mode: P read from %s and held fixed\n", fn.c_str());
   }
+  if (!o.qin.empty()) {
+    read_matrix(o.qin, x0.data() + m.nP, D.N, K);
+    if (!o.pin.empty()) {  // P rows in input order; row j of the model is input row perm[j]
+      Vec Pin(m.nP);
+      read_matrix(o.pin, Pin.data(), D.M, K);
+      for (int j = 0; j < D.M; j++)
+        std::copy(Pin.begin() + (size_t)perm[j] * K, Pin.begin() + (size_t)(perm[j] + 1) * K, x0.begin() + (size_t)j * K);
+    }
+  }
   if (o.supervised) {
     for (int i = 0; i < D.N; i++)
       if (label[i] >= 0) {
@@ -296,11 +316,35 @@ static void analyse(Data& D, Options& o, double t0) {
     fr.seed = fs.seed + r;
     x = x0;
     std::mt19937_64 rng(fr.seed);
+    Fitter<Model<Data>>(m, fr).init_random(x, rng);
+    if (o.supervised && !o.projection) D.supervised_start(label, K, x.data(), m.PMIN, m.PMAX);
+    if (!o.qin.empty()) {  // given start: Q (and P) from x0; no EM priming or warm-up unless asked for
+      std::copy(x0.begin() + m.nP, x0.end(), x.begin() + m.nP);
+      if (!o.pin.empty()) std::copy(x0.begin(), x0.begin() + m.nP, x.begin());
+      m.project(x.data());
+      if (o.pin.empty()) {  // P fitted to the given Q: EM steps with every row of Q held fixed
+        Vec y(x.size());
+        std::fill(m.qfix.begin(), m.qfix.end(), 1);
+        for (int e = 0; e < o.ss.p_em; e++) {
+          m.em(x.data(), y.data());
+          x.swap(y);
+        }
+        std::fill(m.qfix.begin(), m.qfix.end(), 0);
+      }
+      say("Start: Q from %s, P %s\n", o.qin.c_str(),
+          o.pin.empty() ? ("fitted to it (" + std::to_string(o.ss.p_em) + " EM steps)").c_str() : ("from " + o.pin).c_str());
+      fr.prime = o.prime >= 0 ? o.prime : 0;
+      fr.minibatch = o.minibatch >= 0 ? o.minibatch : 0;
+    }
+    if (o.search) fr.tol = std::max(fs.tol, o.ss.tol);  // the start of a search is fitted loosely
     Fitter<Model<Data>> fit(m, fr);
     fit.verbose = r == 0;  // iteration details for the first run only
-    fit.init_random(x, rng);
-    if (o.supervised && !o.projection) D.supervised_start(label, K, x.data(), m.PMIN, m.PMAX);
-    const FitResult res = fit.run(x);
+    FitResult res = fit.run(x);
+    if (o.search) {  // split-merge search from this fit
+      const SearchResult sr = run_search(D, m, x, res.loglik, fs, o.ss, o.qin.empty() ? o.ss.start_cost : 0.5,
+                                         o.out + "." + std::to_string(K) + ".search");
+      res.loglik = sr.loglik, res.iterations = sr.iterations, res.seconds = omp_get_wtime() - t0;
+    }
     Run run{fr.seed, res.loglik, res.seconds, res.iterations,
             std::vector<float>(x.begin() + m.nP, x.end()), QDistance(), false};
     runs.push_back(std::move(run));
@@ -376,6 +420,10 @@ int main(int argc, char** argv) {
     else if (s == "--no-gzip") o.gz = false;
     else if (s == "--no-P") o.write_P = false;
     else if (s == "--keep-missing") o.glf.skip_missing = false;
+    else if (s == "--search") o.search = true;
+    else if (s.rfind("--search=", 0) == 0) o.search = true, o.ss.budget = std::atof(s.substr(9).c_str());
+    else if (s.rfind("--Qin", 0) == 0) o.qin = opt_value(argc, argv, a, "--Qin");
+    else if (s.rfind("--Pin", 0) == 0) o.pin = opt_value(argc, argv, a, "--Pin");
     else if (s.rfind("--conv_thres", 0) == 0) o.conv_thres = std::atof(opt_value(argc, argv, a, "--conv_thres").c_str());
     else if (s.rfind("--conv", 0) == 0) o.conv = std::atoi(opt_value(argc, argv, a, "--conv").c_str());
     else if (s.rfind("--max_runs", 0) == 0) o.max_runs = std::atoi(opt_value(argc, argv, a, "--max_runs").c_str());
@@ -417,6 +465,18 @@ int main(int argc, char** argv) {
   if (o.K < 1 || o.threads < 1 || o.conv < 0 || o.max_runs < 1 || (o.hess != "exact" && o.hess != "em") ||
       fs.qn_damp < 0 || !(fs.qn_damp_factor > 0 && fs.qn_damp_factor < 1))
     usage(1);
+  if ((o.search || !o.qin.empty()) && (o.projection || o.supervised || o.conv > 0 || !o.from.empty())) {
+    std::fprintf(stderr, "--search and --Qin cannot be combined with -P, --supervised, --conv or --from\n");
+    return 1;
+  }
+  if (!o.pin.empty() && o.qin.empty()) {
+    std::fprintf(stderr, "--Pin needs --Qin\n");
+    return 1;
+  }
+  if (o.search && !(o.ss.budget >= 1)) {
+    std::fprintf(stderr, "--search=X: the budget X must be at least 1 standard run\n");
+    return 1;
+  }
   if (!o.from.empty()) {
     if (o.projection || o.supervised || o.conv > 0) usage(1);
     if (!o.paired) o.parental = true;
