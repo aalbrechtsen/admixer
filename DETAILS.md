@@ -152,15 +152,28 @@ whether the move was accepted. The log has the same per refit and a summary.
 `--prime`/`--minibatch` are given). `--search` and `--Qin` cannot be combined with `-P`, `--supervised`,
 `--conv` or `--from`.
 
-**Reindeer data, K = 11** (steve, 8 threads per run, 10 seeds each). The log-likelihoods are relative to the
-best solution found, −15,042,991.78. A standard run takes 23.1 s, data reading included.
+**Reindeer data, K = 11** (steve, 8 threads per run, 10 seeds each). Each run is compared with the best
+solution found (log L −15,042,991.78) by the largest difference in any Q entry, max |ΔQ|, after matching the
+components. Runs agree when max |ΔQ| < 0.01, the rule of `--conv`. A standard run takes 23.1 s, data reading
+included.
 
-| | time (× standard run) | at the best | within 30 | within 600 | worst |
+| | time (× standard run) | same solution (max \|ΔQ\| < 0.01) | max \|ΔQ\| ≤ 0.06 (2 individuals differ) | max \|ΔQ\| ≤ 0.31 (≤ 10 individuals differ) | another partition (max \|ΔQ\| = 1) |
 |---|---|---|---|---|---|
-| 10 standard runs (best of them) | 10 | 0 | 0 | 0 | best of them: −28,638 |
-| `--search=10`¹ | 11.9 | 1 | 1 | 7 | −27,927 |
-| `--search` (20), merge pairs by d_ab only² | 20.6 | 2 | 4 | 8 | −23,308 |
-| `--search` (20) | 19.7 | 2 | 3 | 9 | −23,402 |
+| 10 standard runs | 1 each | 0 | 0 | 0 | 10 |
+| `--search=10`¹ | 11.9 | 1 | 1 | 7 | 3 |
+| `--search` (20), merge pairs by d_ab only² | 20.6 | 2 | 4 | 8 | 2 |
+| `--search` (20) | 19.7 | 2 | 3 | 9 | 1 |
+
+In log-likelihood terms:
+* max |ΔQ| 0.058 is 26 units below the best;
+* 0.15 is 33 or 219 units below;
+* 0.29–0.31 is 280–590 units below;
+* another partition is 23,000–29,000 below.
+
+A small log-likelihood gap does not mean the same Q.
+
+So most searches find the right partition. But only 2 of 10 also settle every individual: the remaining
+differences are a few individuals with in-between ancestry in one of two states.
 
 ¹ Run with a refit charge of 0.5 (9 rounds), before the charge was set to 0.6 from these timings; with 0.6,
 `--search=10` makes 7 rounds.
