@@ -112,10 +112,14 @@ was 6,500 log-likelihood units below the best solution found. Two kinds of optim
 `--search[=X]` starts from one random start, fitted loosely (`-C 10`), and then repeats rounds:
 1. **Moves.** A move merges component b into component a, which frees column b, and splits another
    component c: the Q of c of half of c's main individuals (largest Q) moves to column b.
-   * The pair (a, b) is one of the 4 pairs with the most similar P (mean squared difference).
+   * The pair (a, b) is one of the 4 pairs with the most similar P (mean squared difference d_ab), or one of
+     the 4 with the smallest d_ab · m_a m_b / (m_a + m_b), where m is a component's total Q. The P of a
+     component with little Q (an admixed group given a component of its own) comes from few individuals. Its
+     noise, about 1/m_a + 1/m_b, puts it far from every other component by d_ab alone. On the data below,
+     the merge two runs needed ranked 13th of 55 by d_ab and 3rd scaled.
    * The halves are the signs of the first principal component of those individuals' genotypes (GLs: the
      expected genotypes). It is computed by power iteration on at most 50,000 evenly spaced SNPs.
-   * There are up to 4 × (K − 2) moves. Each round refits 2 untried ones, drawn at random.
+   * There are up to 8 × (K − 2) moves (4–8 pairs). Each round refits 2 untried ones, drawn at random.
 2. **Refit.** P is fitted to the moved Q by 20 EM steps with Q held fixed, from a random P. Then the fit runs
    as usual (mini-batch warm-up, then quasi-Newton) to `-C 10`. Starting from the moved Q without the warm-up
    took 4–5 times as long: the fit creeps along plateaus.
@@ -130,7 +134,7 @@ run is reproducible for a given seed:
 * the loose start: 0.75 (0.5 with `--Qin`);
 * each refit: 0.6.
 
-The default, 20, gives 16 rounds (32 refits). Measured: 20.6× the time of a standard run on the data below.
+The default, 20, gives 16 rounds (32 refits). Measured: 19.7× the time of a standard run on the data below.
 
 **Why moves are drawn at random.** No cheap score predicted the winning move. On the reindeer data, the move
 that won after a full refit ranked 12th–30th of 36:
@@ -155,18 +159,25 @@ best solution found, −15,042,991.78. A standard run takes 23.1 s, data reading
 |---|---|---|---|---|---|
 | 10 standard runs (best of them) | 10 | 0 | 0 | 0 | best of them: −28,638 |
 | `--search=10`¹ | 11.9 | 1 | 1 | 7 | −27,927 |
-| `--search` (20) | 20.6 | 2 | 4 | 8 | −23,308 |
+| `--search` (20), merge pairs by d_ab only² | 20.6 | 2 | 4 | 8 | −23,308 |
+| `--search` (20) | 19.7 | 2 | 3 | 9 | −23,402 |
 
 ¹ Run with a refit charge of 0.5 (9 rounds), before the charge was set to 0.6 from these timings; with 0.6,
 `--search=10` makes 7 rounds.
+
+² The first version. Seeds 3 and 9 stopped where the needed merge was not proposed (see above); with the scaled
+pairs they end 279 and 26 below the best.
 
 On a 107,002-SNP subset of the same data, `--search=10` (seeds 3 and 7) reached the subset's best solution
 (−5,011,936.11), in 62 s against 5.9 s for a standard run.
 
 **Limits.**
-* The search is local. In both runs that ended 23,308 below the best (seeds 3 and 9, both from the best two
-  random starts), no move of 32 helped. If several `--search` runs (different seeds) disagree, keep the
-  highest log-likelihood.
+* The search is local, and some optima cannot be left by any split-merge move. In the run that ended 23,402
+  below the best (seed 1), two South Greenland individuals shared the component of the two Olrik_Fjord
+  individuals. Moving those two individuals back to the South Greenland component leaves this optimum
+  (+22,918 after the refit). But a split-merge move always merges two components, and splits only a third
+  one, so it cannot do that. If several `--search` runs (different seeds) disagree, keep the highest
+  log-likelihood.
 * For GLs the refits have no warm-up by default (`--minibatch=0`), so each costs more than the charge. The
   search runs and is tested on the test data, but its budget is not calibrated for GLs.
 

@@ -36,7 +36,7 @@ struct SearchSettings {
   double start_cost = 0.75; // charge of a loose random start (0.5 for a given start, --Qin)
   double refit_cost = 0.6;  // charge of a refit
   int per_round = 2;        // moves refitted per round
-  int nmerge = 4;           // merge candidates: the pairs of components with the closest P
+  int nmerge = 4;           // merge candidates: the closest pairs by P, and the closest by P scaled by Q mass
   int p_em = 20;            // EM steps (Q fixed) that fit P to a moved Q
   double tol = 10;          // log-likelihood tolerance of the start and the refits (the winner is polished)
   int pc_snps = 50000;      // at most this many SNPs (evenly spaced) for the split direction
@@ -120,7 +120,12 @@ struct Move {
   std::vector<int> half;  // individuals whose Q of c moves to b
 };
 
-// All moves from the solution x: NMERGE closest pairs (mean squared P difference) times every other component.
+// All moves from the solution x: the merge pairs times every other component. Merge pairs: the NMERGE closest by
+// the mean squared P difference d_ab, and the NMERGE closest by d_ab m_a m_b / (m_a + m_b), m = total Q of a
+// component. The P of a component with little Q (an admixed group given a component of its own) is estimated from
+// few individuals; its sampling noise, ~ 1/m_a + 1/m_b, puts it far from every other component by d_ab alone.
+// On the reindeer data (K = 11) two runs stopped where the needed merge, of two such components, ranked 13th of
+// 55 by d_ab and 3rd scaled.
 template <class Data>
 std::vector<Move> make_moves(const Data& D, const Model<Data>& m, const Vec& x, const SearchSettings& ss) {
   const int K = m.K, N = D.N, M = D.M;
@@ -133,13 +138,23 @@ std::vector<Move> make_moves(const Data& D, const Model<Data>& m, const Vec& x, 
         const double d = P[(size_t)j * K + a] - P[(size_t)j * K + b];
         dist[a * K + b] += d * d;
       }
-  std::vector<std::pair<int, int>> pairs;
+  std::vector<double> mass(K, 0.0);
+  for (int i = 0; i < N; i++)
+    for (int k = 0; k < K; k++) mass[k] += Q[(size_t)i * K + k];
+  std::vector<std::pair<int, int>> all, pairs;
   for (int a = 0; a < K; a++)
-    for (int b = a + 1; b < K; b++) pairs.push_back({a, b});
-  std::stable_sort(pairs.begin(), pairs.end(), [&](auto u, auto v) {
-    return dist[u.first * K + u.second] < dist[v.first * K + v.second];
+    for (int b = a + 1; b < K; b++) all.push_back({a, b});
+  auto closest = [&](auto score) {  // the NMERGE pairs with the smallest score, added to pairs if new
+    std::vector<std::pair<int, int>> s = all;
+    std::stable_sort(s.begin(), s.end(), [&](auto u, auto v) { return score(u) < score(v); });
+    for (size_t t = 0; t < std::min<size_t>(s.size(), ss.nmerge); t++)
+      if (std::find(pairs.begin(), pairs.end(), s[t]) == pairs.end()) pairs.push_back(s[t]);
+  };
+  closest([&](std::pair<int, int> u) { return dist[u.first * K + u.second]; });
+  closest([&](std::pair<int, int> u) {
+    const double ma = mass[u.first], mb = mass[u.second];
+    return dist[u.first * K + u.second] * (ma + mb > 0 ? ma * mb / (ma + mb) : 0.0);
   });
-  pairs.resize(std::min<size_t>(pairs.size(), ss.nmerge));
   // the split of each component: its main individuals (largest Q), or the two with the largest Q if fewer
   std::vector<std::vector<int>> halves(K);
   for (int c = 0; c < K; c++) {
