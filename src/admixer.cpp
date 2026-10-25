@@ -72,7 +72,9 @@ static void usage(int code) {
       "                      only; the log goes to NAME.K.from.log. Use the same input and filters as that run\n"
       "  --search[=X]        search for a better optimum by split-merge moves (merge two components, split\n"
       "                      another), within a budget of X standard runs (default 20); writes NAME.K.search\n"
-      "                      (every move tried). For hard data (many local optima, large K); see DETAILS.md\n"
+      "                      (every move tried). For hard data (many local optima, large K); see DETAILS.md.\n"
+      "                      With --conv: each run is a search; runs that disagree exchange single individuals'\n"
+      "                      states (cross-flips) before the agreement test\n"
       "  --Qin=FILE          start from this Q (N x K, e.g. NAME.K.Q of an earlier run) instead of a random\n"
       "                      start; P is fitted to it (20 EM steps with Q fixed) unless --Pin is given\n"
       "  --Pin=FILE          with --Qin: start from this P (M x K, NAME.K.P[.gz]; GLs: the sites kept by the\n"
@@ -309,6 +311,7 @@ static void analyse(Data& D, Options& o, double t0) {
     bool agrees = false;
   };
   std::vector<Run> runs;
+  std::vector<Vec> xs;  // --search with --conv: every run's solution (P and Q), for the cross-flips
   Vec x, best_x;
   int best = -1, agreeing = 0;
   for (int r = 0; r < nruns; r++) {
@@ -341,8 +344,9 @@ static void analyse(Data& D, Options& o, double t0) {
     fit.verbose = r == 0;  // iteration details for the first run only
     FitResult res = fit.run(x);
     if (o.search) {  // split-merge search from this fit
-      const SearchResult sr = run_search(D, m, x, res.loglik, fs, o.ss, o.qin.empty() ? o.ss.start_cost : 0.5,
-                                         o.out + "." + std::to_string(K) + ".search");
+      const SearchResult sr =
+          run_search(D, m, x, res.loglik, fs, o.ss, o.qin.empty() ? o.ss.start_cost : 0.5,
+                     o.out + "." + std::to_string(K) + (o.conv > 0 ? ".run" + std::to_string(r + 1) : "") + ".search");
       res.loglik = sr.loglik, res.iterations = sr.iterations, res.seconds = omp_get_wtime() - t0;
     }
     Run run{fr.seed, res.loglik, res.seconds, res.iterations,
@@ -350,6 +354,40 @@ static void analyse(Data& D, Options& o, double t0) {
     runs.push_back(std::move(run));
     if (best < 0 || res.loglik > runs[best].loglik) best = r, best_x = x;
     if (o.conv == 0) break;
+    if (o.search) {
+      // Cross-flips: the best run takes single individuals' states from every run it disagrees with, and that
+      // run takes the best run's states (search.hpp, cross_flip); changed runs are polished to -C. Repeated while
+      // anything changes (at most 3 passes).
+      xs.push_back(x);
+      FitSettings fp = fs;
+      fp.prime = 0, fp.minibatch = 0;
+      auto polish = [&](int u) {
+        Fitter<Model<Data>> fit(m, fp);
+        fit.verbose = false;
+        runs[u].loglik = fit.run(xs[u]).loglik;
+        runs[u].Q.assign(xs[u].begin() + m.nP, xs[u].end());
+      };
+      bool changed = runs.size() > 1;
+      for (int pass = 0; changed && pass < 3; pass++) {
+        changed = false;
+        for (int u = 0; u < (int)runs.size(); u++) {
+          if (u == best || q_distance(runs[u].Q.data(), runs[best].Q.data(), D.N, K).max_abs < o.conv_thres) continue;
+          char w1[64], w2[64];
+          std::snprintf(w1, sizeof w1, "run %d <- run %d", best + 1, u + 1);
+          std::snprintf(w2, sizeof w2, "run %d <- run %d", u + 1, best + 1);
+          const std::vector<float> Qb = runs[best].Q, Qu = runs[u].Q;
+          const FlipResult f1 = cross_flip(m, xs[best], Qu, fs, o.ss, w1);
+          const FlipResult f2 = cross_flip(m, xs[u], Qb, fs, o.ss, w2);
+          say("Cross-flips between runs %d and %d: %d of %d and %d of %d flips kept\n", best + 1, u + 1, f1.kept,
+              f1.flips, f2.kept, f2.flips);
+          if (f1.kept) polish(best), changed = true;
+          if (f2.kept) polish(u), changed = true;
+        }
+        for (int u = 0; u < (int)runs.size(); u++)
+          if (runs[u].loglik > runs[best].loglik) best = u;
+      }
+      best_x = xs[best];
+    }
     // agreement of every run with the current best run (the best can change, so recompute all)
     agreeing = 0;
     for (auto& u : runs) {
@@ -465,8 +503,8 @@ int main(int argc, char** argv) {
   if (o.K < 1 || o.threads < 1 || o.conv < 0 || o.max_runs < 1 || (o.hess != "exact" && o.hess != "em") ||
       fs.qn_damp < 0 || !(fs.qn_damp_factor > 0 && fs.qn_damp_factor < 1))
     usage(1);
-  if ((o.search || !o.qin.empty()) && (o.projection || o.supervised || o.conv > 0 || !o.from.empty())) {
-    std::fprintf(stderr, "--search and --Qin cannot be combined with -P, --supervised, --conv or --from\n");
+  if ((o.search || !o.qin.empty()) && (o.projection || o.supervised || !o.from.empty() || (!o.qin.empty() && o.conv > 0))) {
+    std::fprintf(stderr, "--search and --Qin cannot be combined with -P, --supervised or --from, nor --Qin with --conv\n");
     return 1;
   }
   if (!o.pin.empty() && o.qin.empty()) {

@@ -163,7 +163,10 @@ run plink_qpin sim.bed 3 --Qin=plink.3.Q --Pin=plink.3.P.gz --no-evaladmix
 ok "plink --Qin --Pin: same optimum, few iterations" "a < 0.01 && a > -0.01 && b <= 5" \
   "$(awk -v a="$(ll_of plink_qpin.3.log)" -v b="$(ll_of plink.3.log)" 'BEGIN{print a-b}')" "$(iters_of plink_qpin.3.log)"
 run e6 sim.bed 3 --Pin=plink.3.P.gz; ok "--Pin without --Qin is rejected" "a != 0" "$(cat e6.rc)"
-run e7 sim.bed 3 --search --conv 2; ok "--search with --conv is rejected" "a != 0" "$(cat e7.rc)"
+run e7 sim.bed 3 --Qin=plink.3.Q --conv 2; ok "--Qin with --conv is rejected" "a != 0" "$(cat e7.rc)"
+run plink_sconv sim.bed 3 -s 1 --search=3 --conv 2 -m 3 --no-evaladmix
+ok "plink --search --conv: converged" "a == 1" "$(grep -c '^Converged: ' plink_sconv.3.log)"
+ok "plink --search --conv: one move table per run" "a >= 2" "$(ls plink_sconv.3.run*.search | wc -l)"
 # --search: split-merge moves within a budget of standard runs
 run plink_search sim.bed 3 -s 1 --search=4 --no-evaladmix
 ok "plink --search: exit code 0" "a == 0" "$(cat plink_search.rc)"

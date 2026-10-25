@@ -30,6 +30,7 @@
 #include "io.hpp"
 #include "log.hpp"
 #include "model.hpp"
+#include "multistart.hpp"
 
 struct SearchSettings {
   double budget = 20;       // in standard runs
@@ -41,6 +42,8 @@ struct SearchSettings {
   double tol = 10;          // log-likelihood tolerance of the start and the refits (the winner is polished)
   int pc_snps = 50000;      // at most this many SNPs (evenly spaced) for the split direction
   int pc_iter = 30;         // power iterations for the split direction
+  double flip_tol = 1;      // cross-flips (--search with --conv): tolerance of the flip fits
+  double flip_gain = 1;     // a flip is kept if it raises the log-likelihood by more (gains below are fit noise)
 };
 
 // Value of entry (j, i) for the split direction: genotype (copies of A2), or for GLs the expected genotype under
@@ -276,5 +279,77 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
   say("Search: %d rounds, %d refits, %d moves accepted, %.1f of %g standard runs used; polished loglik %f "
       "(%d iterations, %.1f sec)\n", res.rounds, res.refits, res.accepted, res.used, ss.budget, r.loglik, r.iterations,
       r.seconds);
+  return res;
+}
+
+// col[a] = the column of B (N x K) matched to column a of A: the assignment with the least total squared
+// difference (as q_distance in multistart.hpp).
+template <class TB>
+std::vector<int> match_columns(const double* A, const TB* B, int N, int K) {
+  std::vector<double> cost((size_t)K * K, 0.0);
+  for (int i = 0; i < N; i++)
+    for (int a = 0; a < K; a++)
+      for (int b = 0; b < K; b++) {
+        const double d = A[(size_t)i * K + a] - (double)B[(size_t)i * K + b];
+        cost[(size_t)a * K + b] += d * d;
+      }
+  return hungarian(cost, K);
+}
+
+struct FlipResult {
+  double loglik;  // at flip_tol
+  int flips = 0, kept = 0;
+};
+
+// Cross-flips (--search with --conv): moves single individuals of solution x into their state in another solution
+// Qo (N x K, columns matched to x's), one at a time, most different first. A flip continues from x's P to
+// ss.flip_tol and is kept if the log-likelihood rises by more than ss.flip_gain; after a kept flip the differences
+// are recomputed. Individuals with in-between ancestry can sit stably in one of two states, and the state a run
+// needs is often found only by another run (on the reindeer data, flips with states from a run's own refits
+// rarely helped). Returns the log-likelihood of x (at flip_tol).
+template <class Data>
+FlipResult cross_flip(Model<Data>& m, Vec& x, const std::vector<float>& Qo, const FitSettings& fs,
+                      const SearchSettings& ss, const char* what) {
+  const int K = m.K, N = m.D.N;
+  const size_t nP = m.nP;
+  FitSettings ff = fs;
+  ff.prime = 0, ff.minibatch = 0, ff.tol = ss.flip_tol;
+  FlipResult res;
+  {
+    Fitter<Model<Data>> fit(m, ff);
+    fit.verbose = false;
+    res.loglik = fit.run(x).loglik;
+  }
+  std::vector<char> tried(N, 0);
+  for (bool more = true; more;) {
+    more = false;
+    const std::vector<int> col = match_columns(x.data() + nP, Qo.data(), N, K);
+    std::vector<double> d(N, 0.0);
+    std::vector<int> cand;
+    for (int i = 0; i < N; i++) {
+      for (int a = 0; a < K; a++)
+        d[i] = std::max(d[i], std::fabs(x[nP + (size_t)i * K + a] - (double)Qo[(size_t)i * K + col[a]]));
+      if (d[i] > 0.01 && !tried[i]) cand.push_back(i);
+    }
+    std::stable_sort(cand.begin(), cand.end(), [&](int u, int v) { return d[u] > d[v]; });
+    for (int i : cand) {
+      tried[i] = 1;
+      Vec z = x;
+      for (int a = 0; a < K; a++) z[nP + (size_t)i * K + a] = Qo[(size_t)i * K + col[a]];
+      m.project(z.data());
+      Fitter<Model<Data>> fit(m, ff);
+      fit.verbose = false;
+      const FitResult r = fit.run(z);
+      res.flips++;
+      const bool keep = r.loglik > res.loglik + ss.flip_gain;
+      if (keep) {
+        say("Cross-flip %s: individual %d (max |dQ| %.3f): loglik %f -> %f\n", what, i + 1, d[i], res.loglik, r.loglik);
+        res.loglik = r.loglik, x = z;
+        res.kept++;
+        more = true;
+        break;
+      }
+    }
+  }
   return res;
 }
