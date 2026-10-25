@@ -106,6 +106,7 @@ extension (`data`) as prefix:
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
 | `--search[=X]` | search for a better optimum by split-merge moves, within a budget of X standard runs (default 20); see below |
+| `--svd[=0\|1]` | start from a randomised SVD of the genotypes + alternating least squares (as fastmixture) instead of a random start; default on for the first run of `--conv` (the other runs start at random), off otherwise |
 | `--Qin=FILE` | start from this Q (e.g. `NAME.K.Q` of an earlier run) instead of a random start; P is fitted to it |
 | `--Pin=FILE` | with `--Qin`: start from this P as well (`NAME.K.P.gz` or `.P`; for beagle input, the sites kept by the same filters) |
 | `--no-evaladmix` | do not compute the evalAdmix correlation of residuals |

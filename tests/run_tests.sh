@@ -167,6 +167,15 @@ run e7 sim.bed 3 --Qin=plink.3.Q --conv 2; ok "--Qin with --conv is rejected" "a
 run plink_sconv sim.bed 3 -s 1 --search=3 --conv 2 -m 3 --no-evaladmix
 ok "plink --search --conv: converged" "a == 1" "$(grep -c '^Converged: ' plink_sconv.3.log)"
 ok "plink --search --conv: one move table per run" "a >= 2" "$(ls plink_sconv.3.run*.search | wc -l)"
+# --svd: SVD/ALS start (randomised SVD + alternating least squares)
+run plink_svd sim.bed 3 -s 1 --svd --no-evaladmix
+ok "plink --svd: exit code 0" "a == 0" "$(cat plink_svd.rc)"
+ok "plink --svd: SVD/ALS start reported" "a == 1" "$(grep -c '^Start: SVD/ALS' plink_svd.3.log)"
+ok "plink --svd: same optimum as the random start (|dll| < 0.01)" "a < 0.01 && a > -0.01" \
+  "$(awk -v a="$(ll_of plink_svd.3.log)" -v b="$(ll_of plink.3.log)" 'BEGIN{print a-b}')"
+run plink_svd0 sim.bed 3 -s 1 --conv 2 -m 3 --svd=0 --no-evaladmix
+ok "plink --conv --svd=0: no SVD start" "a == 0" "$(grep -c '^Start: SVD/ALS' plink_svd0.3.log)"
+ok "plink --conv: SVD start for the first run" "a == 1" "$(grep -c '^Start: SVD/ALS' plink_conv.3.log)"
 # --search: split-merge moves within a budget of standard runs
 run plink_search sim.bed 3 -s 1 --search=4 --no-evaladmix
 ok "plink --search: exit code 0" "a == 0" "$(cat plink_search.rc)"
@@ -251,6 +260,9 @@ ok "beagle -P: Q from the fixed P equals the joint fit (max |dQ| < 1e-3)" "a < 1
 rm -f sim_d3.3.P.in
 run bgl_conv sim_d3.beagle.gz 3 -s 1 --conv 2 -m 4
 ok "beagle --conv: converged" "a == 1" "$(grep -c '^Converged: ' bgl_conv.3.log)"
+run bgl_svd sim_d3.beagle.gz 3 -s 1 --svd --no-evaladmix
+ok "beagle --svd: same optimum as the random start (|dll| < 0.01)" "a < 0.01 && a > -0.01" \
+  "$(awk -v a="$(ll_of bgl_svd.3.log)" -v b="$(ll_of bgl_d3.3.log)" 'BEGIN{print a-b}')"
 run bgl_search sim_d3.beagle.gz 3 -s 1 --search=4 --no-evaladmix
 ok "beagle --search: exit code 0" "a == 0" "$(cat bgl_search.rc)"
 ok "beagle --search: log L >= single run" "a >= b - $LLTOL" "$(ll_of bgl_search.3.log)" "$(ll_of bgl_d3.3.log)"

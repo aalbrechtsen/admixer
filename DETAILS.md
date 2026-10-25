@@ -194,6 +194,35 @@ On a 107,002-SNP subset of the same data, `--search=10` (seeds 3 and 7) reached 
 * For GLs the refits have no warm-up by default (`--minibatch=0`), so each costs more than the charge. The
   search runs and is tested on the test data, but its budget is not calibrated for GLs.
 
+## SVD/ALS start (`--svd`)
+
+`--svd` starts a run from a randomised SVD of the genotypes instead of a random start. It is ported from
+admix_prog (`src/init.hpp`) and works as SCOPE and fastmixture do:
+1. A rank K − 1 SVD of the centred genotypes, with 7 power iterations.
+2. Alternating least squares for P and Q, with box (P) and simplex (Q) constraints solved row by row. The ALS
+   stops when Q changes by less than 1e-6 (RMS) or after 500 iterations.
+3. The fit then goes straight to the main algorithm, without EM priming or the mini-batch warm-up (unless
+   `--prime`/`--minibatch` are given).
+
+The random test matrix and the ALS start depend on the seed. GLs use the expected genotypes.
+
+**Default.** On for the first run of `--conv` (the other runs start at random), off otherwise. A single
+deterministic start rules out restarts (speed-up note 11), so it is one start among random ones.
+
+Tests: 10 seeds each, 8 threads; compared with the best solution found by max |ΔQ| < 0.01.
+
+| data | single random start | single `--svd` run | time of `--svd` (× standard run) |
+|---|---|---|---|
+| blue wildebeest popgen24, N = 73, M = 146,632, K = 7 | 8/10 | 10/10 | 1.5–2.3 (SVD/ALS 4–9 s) |
+| reindeer, N = 96, M = 321,005, K = 11 | 0/10 | 0/10 (9 of 10 72,000–75,000 below) | 2.9–4.7 (SVD/ALS 14–53 s) |
+
+* On the reindeer data the SVD start was no better than a random start. As the first run of
+  `--conv 3 -m 10` it ranked 2nd–7th of 10 runs, and no replicate converged.
+* As the start of `--search` it reached the best in 1 of 10 runs (random start: 2 of 10), so the search
+  keeps random starts unless `--svd` is given.
+* For comparison: fastmixture 1.3.0, whose default start is the same kind of SVD/ALS, reached the
+  wildebeest optimum in 10/10 runs at 8–16× an admixer standard run.
+
 ## Parental and paired ancestry
 
 `src/parental.hpp`; run with `--parental`/`--paired` after the fit (and after evalAdmix), or with `--from` on the P and Q

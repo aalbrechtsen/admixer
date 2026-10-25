@@ -27,6 +27,7 @@
 #include "multistart.hpp"
 #include "parental.hpp"
 #include "search.hpp"
+#include "svdstart.hpp"
 
 static const char* VERSION = "0.2.11";
 
@@ -75,6 +76,9 @@ static void usage(int code) {
       "                      (every move tried). For hard data (many local optima, large K); see DETAILS.md.\n"
       "                      With --conv: each run is a search; runs that disagree exchange single individuals'\n"
       "                      states (cross-flips) before the agreement test\n"
+      "  --svd[=0|1]         start from a randomised SVD of the genotypes + alternating least squares (as\n"
+      "                      fastmixture) instead of a random start. Default: on for the first run of --conv\n"
+      "                      (the other runs start at random), off otherwise (also for --search)\n"
       "  --Qin=FILE          start from this Q (N x K, e.g. NAME.K.Q of an earlier run) instead of a random\n"
       "                      start; P is fitted to it (20 EM steps with Q fixed) unless --Pin is given\n"
       "  --Pin=FILE          with --Qin: start from this P (M x K, NAME.K.P[.gz]; GLs: the sites kept by the\n"
@@ -126,6 +130,7 @@ struct Options {
   std::string qin, pin;  // --Qin/--Pin: start from this Q (and P)
   SearchSettings ss;
   bool search = false;  // --search
+  int svd = -1;         // --svd: SVD/ALS start (-1: the first run of --conv)
   std::string thread_note;  // why -j was capped, or that it exceeds the physical cores (printed in the log)  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
 
@@ -339,6 +344,13 @@ static void analyse(Data& D, Options& o, double t0) {
       fr.prime = o.prime >= 0 ? o.prime : 0;
       fr.minibatch = o.minibatch >= 0 ? o.minibatch : 0;
     }
+    if (r == 0 && o.qin.empty() && (o.svd == 1 || (o.svd < 0 && o.conv > 0))) {
+      // SVD/ALS start (svdstart.hpp); it replaces the EM priming and the warm-up unless they are asked for
+      const SvdInfo si = svd_start(D, m, x, fr.seed);
+      say("Start: SVD/ALS (rank %d, %d ALS iterations, %.1f sec)\n", K - 1, si.als_iter, si.seconds);
+      fr.prime = o.prime >= 0 ? o.prime : 0;
+      fr.minibatch = o.minibatch >= 0 ? o.minibatch : 0;
+    }
     if (o.search) fr.tol = std::max(fs.tol, o.ss.tol);  // the start of a search is fitted loosely
     Fitter<Model<Data>> fit(m, fr);
     fit.verbose = r == 0;  // iteration details for the first run only
@@ -458,6 +470,8 @@ int main(int argc, char** argv) {
     else if (s == "--no-gzip") o.gz = false;
     else if (s == "--no-P") o.write_P = false;
     else if (s == "--keep-missing") o.glf.skip_missing = false;
+    else if (s == "--svd") o.svd = 1;
+    else if (s.rfind("--svd=", 0) == 0) o.svd = std::atoi(s.substr(6).c_str()) != 0;
     else if (s == "--search") o.search = true;
     else if (s.rfind("--search=", 0) == 0) o.search = true, o.ss.budget = std::atof(s.substr(9).c_str());
     else if (s.rfind("--Qin", 0) == 0) o.qin = opt_value(argc, argv, a, "--Qin");
