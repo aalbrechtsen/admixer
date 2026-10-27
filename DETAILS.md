@@ -197,6 +197,7 @@ standard runs (median); reindeer on steve, the other sets on dylan (Xeon Gold 61
 
 | data (N, M, K) | standard run | plain search | default | `--search-lineages=4` |
 |---|---|---|---|---|
+| reindeer (96, 321,005, 8) | 5/10 | 10/10, 19.6× | 7/10, 7.6× | 10/10, 22.5× |
 | reindeer (96, 321,005, 9) | 3/10 | 8/10, 19.2× | 8/10, 9.9× | 10/10, 21.5× |
 | reindeer (96, 321,005, 10) | 0/10 | 9/10, 17.7× | 9/10, 10.0× | 10/10, 20.4× |
 | reindeer (96, 321,005, 11) | 0/10 | 2/10, 19.4× | 0/10 (10/10 right partition), 14.1× | 0/10 (10/10 right partition), 21.6× |
@@ -205,7 +206,12 @@ standard runs (median); reindeer on steve, the other sets on dylan (Xeon Gold 61
 | simulated L2 (600, 10,000, 10) | 4/10 | 9/10, 7.4× | 9/10, 6.0× | 9/10, 8.8× |
 | simulated S2, C2, S5, O8 (600–1000, 10,000–20,000, 8–12) | 0–1/10 | 0–1/10 | 0–1/10 | 0–1/10 |
 
-So the default reaches the best as often as the plain search, in about half the time on the real data.
+So the default mostly reaches the best as often as the plain search, in about half the time on the real data.
+The exception is reindeer K = 8: three searches started close to the best (67 units below, 11 individuals
+different) and stopped after 6 rounds without an accepted move; the winning move came in rounds 8–11 with
+`--search-patience=0` (10/10, 15.5×). If the time allows, `--search-patience=0` or the lineages are safer.
+Run alone, a search on 1000 Genomes chr20 (N = 2,590, M = 157,318, K = 10) took 25.5 standard runs: a refit
+costs about 0.6 there too, but the P fits and split directions add some.
 `--search-lineages=L` runs L searches from random starts: all L share half the budget, the better half go on
 with a quarter, and so on, the best one gets the rest. Before the last phase the two best lineages, which have
 shared nothing, are compared, and the log says whether they agree (max |ΔQ| < 0.01). In 31 of the 32 runs where
