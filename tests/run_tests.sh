@@ -182,6 +182,11 @@ ok "plink --search: exit code 0" "a == 0" "$(cat plink_search.rc)"
 ok "plink --search: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search.3.log)" "$(ll_of plink.3.log)"
 ok "plink --search: move table has a header and the refits" "a >= 3" "$(nrows plink_search.3.search)"
 formats plink_search 3 200 4000
+run plink_search_x sim.bed 3 -s 1 --search=4 --search-abort=1000 --search-patience=3 --search-order=split --search-par --no-evaladmix
+ok "plink --search with the experiment options: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search_x.3.log)" "$(ll_of plink.3.log)"
+run plink_search_l sim.bed 3 -s 1 --search=6 --search-lineages=4 --no-evaladmix
+ok "plink --search-lineages=4: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search_l.3.log)" "$(ll_of plink.3.log)"
+ok "plink --search-lineages=4: lineages compared" "a == 1" "$(grep -c '^Search lineages: the two best' plink_search_l.3.log)"
 run plink_search_rep sim.bed 3 -s 1 --search=4 --no-evaladmix
 ok "plink --search: same seed, same Q" "a == 0" "$(cmp -s plink_search.3.Q plink_search_rep.3.Q; echo $?)"
 run plink_sup --supervised sim.bed 3 -s 1

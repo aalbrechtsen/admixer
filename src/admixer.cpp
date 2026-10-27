@@ -355,7 +355,75 @@ static void analyse(Data& D, Options& o, double t0) {
     Fitter<Model<Data>> fit(m, fr);
     fit.verbose = r == 0;  // iteration details for the first run only
     FitResult res = fit.run(x);
-    if (o.search) {  // split-merge search from this fit
+    if (o.search && o.ss.lineages > 1 && o.conv == 0 && o.qin.empty()) {
+      // --search-lineages=L (experiment): successive halving. L lineages (this start and L-1 more random starts)
+      // share half of the budget; then the better half of them go on with an equal share of the rest, and so on
+      // until one is left, which is polished. Before the last phase the two survivors are compared (max |dQ|):
+      // they have exchanged nothing, so their agreement is an honest convergence check.
+      struct Lineage {
+        Vec x;
+        double ll, used;
+        unsigned long seed;
+      };
+      const int L = o.ss.lineages;
+      std::vector<Lineage> lin;
+      lin.push_back({x, res.loglik, o.ss.start_cost, fr.seed});
+      for (int l = 1; l < L; l++) {
+        FitSettings fl = fr;
+        fl.seed = fs.seed + 10007 * l;
+        Vec xl = x0;
+        std::mt19937_64 rl(fl.seed);
+        Fitter<Model<Data>>(m, fl).init_random(xl, rl);
+        Fitter<Model<Data>> fitl(m, fl);
+        fitl.verbose = false;
+        const double lll = fitl.run(xl).loglik;
+        lin.push_back({xl, lll, o.ss.start_cost, fl.seed});
+        say("Search lineage %d (seed %lu): start loglik %f\n", l + 1, fl.seed, lll);
+      }
+      std::vector<int> alive(L);
+      std::iota(alive.begin(), alive.end(), 0);
+      int nphase = 1;
+      for (int n = L; n > 1; n = (n + 1) / 2) nphase++;
+      double share = o.ss.budget / 2;  // the first phase; the later phases share the other half equally
+      for (int phase = 0; phase < nphase; phase++) {
+        const bool last = phase == nphase - 1;
+        for (int l : alive) {
+          SearchSettings sl = o.ss;
+          sl.polish = last;
+          sl.budget = lin[l].used + share / alive.size();
+          FitSettings fl = fs;
+          fl.seed = lin[l].seed + 31 * phase;
+          say("Search lineage %d, phase %d: budget %.2f standard runs\n", l + 1, phase + 1, share / alive.size());
+          const SearchResult sr = run_search(D, m, lin[l].x, lin[l].ll, fl, sl, lin[l].used,
+                                             last ? o.out + "." + std::to_string(K) + ".search" : "");
+          lin[l].ll = sr.loglik, lin[l].used = sr.used;
+          if (last) res.iterations = sr.iterations;
+        }
+        if (last) break;
+        std::stable_sort(alive.begin(), alive.end(), [&](int a, int b) { return lin[a].ll > lin[b].ll; });
+        alive.resize((alive.size() + 1) / 2);
+        if (alive.size() == 1) {
+          // the two best lineages before the last phase
+          std::vector<int> two = alive;
+          if (two.size() == 1) {
+            std::vector<int> all(L);
+            std::iota(all.begin(), all.end(), 0);
+            std::stable_sort(all.begin(), all.end(), [&](int a, int b) { return lin[a].ll > lin[b].ll; });
+            two = {all[0], all[1]};
+          }
+          const QDistance d = q_distance(lin[two[0]].x.data() + m.nP, lin[two[1]].x.data() + m.nP, D.N, K);
+          say("Search lineages: the two best (%d, %d) %s (max |dQ| %.4f, loglik %f and %f)\n", two[0] + 1, two[1] + 1,
+              d.max_abs < 0.01 ? "agree" : "differ", d.max_abs, lin[two[0]].ll, lin[two[1]].ll);
+        }
+        share = o.ss.budget / 2 / (nphase - 1);
+      }
+      x = lin[alive[0]].x;
+      double used = 0;
+      for (const auto& g : lin) used += g.used;
+      res.loglik = lin[alive[0]].ll, res.seconds = omp_get_wtime() - t0;
+      say("Search lineages: %d lineages, %.1f of %g standard runs used; best lineage %d, loglik %f\n", L, used,
+          o.ss.budget, alive[0] + 1, res.loglik);
+    } else if (o.search) {  // split-merge search from this fit
       const SearchResult sr =
           run_search(D, m, x, res.loglik, fs, o.ss, o.qin.empty() ? o.ss.start_cost : 0.5,
                      o.out + "." + std::to_string(K) + (o.conv > 0 ? ".run" + std::to_string(r + 1) : "") + ".search");
@@ -472,6 +540,12 @@ int main(int argc, char** argv) {
     else if (s == "--keep-missing") o.glf.skip_missing = false;
     else if (s == "--svd") o.svd = 1;
     else if (s.rfind("--svd=", 0) == 0) o.svd = std::atoi(s.substr(6).c_str()) != 0;
+    else if (s == "--search-par") o.ss.par = true;
+    else if (s.rfind("--search-abort=", 0) == 0) o.ss.abort = std::atof(s.substr(15).c_str());
+    else if (s.rfind("--search-patience=", 0) == 0) o.ss.patience = std::atoi(s.substr(18).c_str());
+    else if (s == "--search-order=split") o.ss.order_split = true;
+    else if (s == "--search-order=random") o.ss.order_split = false;
+    else if (s.rfind("--search-lineages=", 0) == 0) o.ss.lineages = std::max(1, std::atoi(s.substr(18).c_str()));
     else if (s == "--search") o.search = true;
     else if (s.rfind("--search=", 0) == 0) o.search = true, o.ss.budget = std::atof(s.substr(9).c_str());
     else if (s.rfind("--Qin", 0) == 0) o.qin = opt_value(argc, argv, a, "--Qin");

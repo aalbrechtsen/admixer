@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <numeric>
 #include <random>
 #include <string>
@@ -41,6 +42,7 @@ struct FitResult {
   int rejected = 0;  // iterations whose extrapolation (also after damping) lost to F(x)
   int damped = 0;    // iterations whose extrapolation was accepted after damping
   double seconds = 0;
+  bool stopped = false;  // stopped after the warm-up by after_warmup (loglik = log L at that point)
 };
 
 template <class Model>
@@ -48,6 +50,9 @@ class Fitter {
  public:
   Fitter(Model& m, const FitSettings& s) : m_(m), s_(s), off_(m.D.ll_offset()) {}
   bool verbose = true;  // print every iteration (false: silent; the caller prints a summary)
+  // Called after the EM priming and the warm-up with the solution and its log-likelihood; true stops the fit
+  // there (--search: refits that are far below the current solution, or back at it).
+  std::function<bool(const Vec&, double)> after_warmup;
 
   // Random start: P uniform in [0.05, 0.95]; each row of Q near uniform, 1/K with 1% relative noise. A sparse
   // start (most Q entries at the lower bound) assigns individuals to random ancestries and traps many runs in
@@ -80,7 +85,12 @@ class Fitter {
     }
     double ll = m_.loglik(x.data()) + off_;
     if (verbose) say("Initial loglikelihood: %f\n", ll);
-    if (s_.minibatch > 1 && !m_.pfix) warmup(x, t0);
+    if (s_.minibatch > 1 && !m_.pfix) ll = warmup(x, t0, ll);
+    if (after_warmup && after_warmup(x, ll)) {
+      FitResult r;
+      r.loglik = ll, r.stopped = true, r.seconds = omp_get_wtime() - t0;
+      return r;
+    }
     if (verbose) say("Starting main algorithm\n");
     // single precision only here: in the EM steps and the warm-up, where a run settles into a basin of
     // attraction, the rounding changed which local optimum some runs on multimodal data reached
@@ -136,11 +146,12 @@ class Fitter {
   // in random order; for each batch, one Newton/QP step for the batch's rows of P (exact: rows of P
   // are independent given Q), then one for Q using the batch's SNPs only. B is halved whenever an
   // epoch does not improve the full log-likelihood; the full-data algorithm takes over at B = 1.
-  void warmup(Vec& x, double t0) {
+  // returns log L of x after the warm-up (ll0: log L before it)
+  double warmup(Vec& x, double t0, double ll0) {
     const int M = m_.D.M, K = m_.K;
     const size_t nP = m_.nP, nQ = m_.nQ;
     int B = std::min(s_.minibatch, std::max(1, M / 500));  // at least ~500 SNPs per batch
-    if (B < 2) return;
+    if (B < 2) return ll0;
     Vec y(x.size());
     std::mt19937_64 rng(s_.seed);
     std::vector<int> order;
@@ -163,6 +174,7 @@ class Fitter {
       if (ll <= prev) B /= 2;
       prev = ll;
     }
+    return prev;
   }
 
   // Quasi-Newton acceleration of the block-relaxation map F (Zhou, Alexander & Lange 2011):

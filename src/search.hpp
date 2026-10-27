@@ -23,6 +23,7 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <memory>
 #include <vector>
 
 #include "beagle.hpp"
@@ -44,6 +45,16 @@ struct SearchSettings {
   int pc_iter = 30;         // power iterations for the split direction
   double flip_tol = 1;      // cross-flips (--search with --conv): tolerance of the flip fits
   double flip_gain = 1;     // a flip is kept if it raises the log-likelihood by more (gains below are fit noise)
+  // experiments (global_search/variants): all off by default
+  bool par = false;          // --search-par: the moves of a round refitted at once, threads split between them
+  double abort = 0;          // --search-abort=A: stop a refit after its warm-up if log L < current - A, or if it
+                             // is back at the current solution (max |dQ| < 0.01); 0 = off
+  double abort_cost = 0.35;  // charge of a refit stopped after its warm-up
+  int patience = 0;          // --search-patience=R: stop after R rounds in a row without an accepted move; 0 = off
+  bool order_split = false;  // --search-order=split: draw moves with weights = how strongly the split component
+                             // falls into two groups (first / second eigenvalue), instead of uniformly
+  int lineages = 1;          // --search-lineages=L: successive halving over L lineages (admixer.cpp)
+  bool polish = true;        // polish the result to -C at the end (off between the phases of the lineages)
 };
 
 // Value of entry (j, i) for the split direction: genotype (copies of A2), or for GLs the expected genotype under
@@ -63,9 +74,15 @@ inline bool entry_value(const GLData& D, int j, int i, double& v) {
 }
 
 // Sign of each individual of S on the first principal component of their centred values (SNP means over S,
-// missing entries 0), by power iteration on X'X without forming it. true = positive side.
+// missing entries 0), by power iteration on X'X without forming it. true = positive side. ratio: first / second
+// eigenvalue of X'X (second by deflation): large when the individuals fall into two groups, ~1 when they do not
+// (set to 1 for fewer than 4 individuals, where it means nothing).
+struct SplitDir {
+  std::vector<char> pos;
+  double ratio = 1;
+};
 template <class Data>
-std::vector<char> split_direction(const Data& D, const std::vector<int>& S, const SearchSettings& ss) {
+SplitDir split_direction(const Data& D, const std::vector<int>& S, const SearchSettings& ss) {
   const int n = S.size();
   const int step = std::max(1, D.M / std::max(1, ss.pc_snps));
   std::vector<int> snps;
@@ -83,9 +100,8 @@ std::vector<char> split_direction(const Data& D, const std::vector<int>& S, cons
     const double mean = c ? s / c : 0;
     for (int u = 0; u < n; u++) x[u] = std::isnan(x[u]) ? 0.f : (float)(x[u] - mean);
   }
-  std::vector<double> a(n), w(ms);
-  for (int u = 0; u < n; u++) a[u] = 1.0 + 0.01 * u;  // deterministic start, not orthogonal to the leading vector
-  for (int it = 0; it < ss.pc_iter; it++) {
+  std::vector<double> w(ms);
+  auto XtX = [&](const std::vector<double>& a) {  // X'X a
 #pragma omp parallel for schedule(static)
     for (int t = 0; t < ms; t++) {
       const float* x = X.data() + (size_t)t * n;
@@ -107,20 +123,47 @@ std::vector<char> split_direction(const Data& D, const std::vector<int>& S, cons
     }
     for (int th = 0; th < nt; th++)
       for (int u = 0; u < n; u++) b[u] += part[(size_t)th * n + u];
-    double nrm = 0;
-    for (double v : b) nrm += v * v;
-    nrm = std::sqrt(nrm);
-    if (!(nrm > 0)) break;
-    for (int u = 0; u < n; u++) a[u] = b[u] / nrm;
+    return b;
+  };
+  // power iteration; lambda = |X'X a| for the normalised iterate a; deflate = the leading pair to remove
+  auto power = [&](std::vector<double>& a, double& lambda, const std::vector<double>* lead, double llead) {
+    lambda = 0;
+    for (int it = 0; it < ss.pc_iter; it++) {
+      std::vector<double> b = XtX(a);
+      if (lead) {
+        double d = 0;
+        for (int u = 0; u < n; u++) d += (*lead)[u] * a[u];
+        for (int u = 0; u < n; u++) b[u] -= llead * d * (*lead)[u];
+      }
+      double nrm = 0;
+      for (double v : b) nrm += v * v;
+      nrm = std::sqrt(nrm);
+      if (!(nrm > 0)) break;
+      lambda = nrm;
+      for (int u = 0; u < n; u++) a[u] = b[u] / nrm;
+    }
+  };
+  SplitDir res;
+  std::vector<double> a(n);
+  for (int u = 0; u < n; u++) a[u] = 1.0 + 0.01 * u;  // deterministic start, not orthogonal to the leading vector
+  double l1 = 0;
+  power(a, l1, nullptr, 0);
+  res.pos.resize(n);
+  for (int u = 0; u < n; u++) res.pos[u] = a[u] > 0;
+  if (ss.order_split && n >= 4) {
+    std::vector<double> a2(n);
+    for (int u = 0; u < n; u++) a2[u] = (u % 2 ? 1.0 : -1.0) + 0.01 * u;
+    double l2 = 0;
+    power(a2, l2, &a, l1);
+    res.ratio = l2 > 0 ? l1 / l2 : 1;
   }
-  std::vector<char> pos(n);
-  for (int u = 0; u < n; u++) pos[u] = a[u] > 0;
-  return pos;
+  return res;
 }
 
 struct Move {
   int a, b, c;            // merge b into a, split c into the freed column b
   std::vector<int> half;  // individuals whose Q of c moves to b
+  double weight = 1;      // --search-order=split: the split component's first / second eigenvalue
 };
 
 // All moves from the solution x: the merge pairs times every other component. Merge pairs: the NMERGE closest by
@@ -160,6 +203,7 @@ std::vector<Move> make_moves(const Data& D, const Model<Data>& m, const Vec& x, 
   });
   // the split of each component: its main individuals (largest Q), or the two with the largest Q if fewer
   std::vector<std::vector<int>> halves(K);
+  std::vector<double> ratio(K, 1.0);
   for (int c = 0; c < K; c++) {
     std::vector<int> S;
     for (int i = 0; i < N; i++) {
@@ -174,16 +218,34 @@ std::vector<Move> make_moves(const Data& D, const Model<Data>& m, const Vec& x, 
       S.assign(idx.begin(), idx.begin() + std::min(2, N));
     }
     if (S.size() < 2) continue;
-    const std::vector<char> pos = split_direction(D, S, ss);
+    const SplitDir sd = split_direction(D, S, ss);
+    ratio[c] = sd.ratio;
     for (size_t u = 0; u < S.size(); u++)
-      if (pos[u]) halves[c].push_back(S[u]);
+      if (sd.pos[u]) halves[c].push_back(S[u]);
     if (halves[c].size() == S.size()) halves[c].clear();  // no split
   }
   std::vector<Move> moves;
   for (auto [a, b] : pairs)
     for (int c = 0; c < K; c++)
-      if (c != a && c != b && !halves[c].empty()) moves.push_back({a, b, c, halves[c]});
+      if (c != a && c != b && !halves[c].empty()) moves.push_back({a, b, c, halves[c], ratio[c]});
   return moves;
+}
+
+// The order in which moves are tried: uniform at random, or (--search-order=split) at random with weights, by
+// sorting on -log(u)/weight (Efraimidis & Spirakis); moves that split a component falling into two groups first.
+inline void order_moves(std::vector<Move>& moves, std::mt19937_64& rng, const SearchSettings& ss) {
+  if (!ss.order_split) {
+    std::shuffle(moves.begin(), moves.end(), rng);
+    return;
+  }
+  std::uniform_real_distribution<double> unif(1e-300, 1.0);
+  std::vector<std::pair<double, size_t>> key(moves.size());
+  for (size_t t = 0; t < moves.size(); t++) key[t] = {-std::log(unif(rng)) / std::max(moves[t].weight, 1e-6), t};
+  std::sort(key.begin(), key.end());
+  std::vector<Move> out;
+  out.reserve(moves.size());
+  for (auto& kv : key) out.push_back(std::move(moves[kv.second]));
+  moves.swap(out);
 }
 
 struct SearchResult {
@@ -193,12 +255,13 @@ struct SearchResult {
   double used = 0;     // budget used, in standard runs
 };
 
-// The search from x (a fitted solution with log-likelihood ll, at tolerance ss.tol). On return x is the polished
-// best solution. fs: the settings of a standard run (warm-up, seed); the refits use its warm-up.
+// The search from x (a fitted solution with log-likelihood ll, at tolerance ss.tol). On return x is the best
+// solution, polished to -C unless ss.polish is false. fs: the settings of a standard run (warm-up, seed); the
+// refits use its warm-up.
 template <class Data>
 SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const FitSettings& fs,
                         const SearchSettings& ss, double used, const std::string& table) {
-  const int K = m.K;
+  const int K = m.K, N = D.N;
   const size_t nP = m.nP;
   SearchResult res;
   res.used = used;
@@ -209,21 +272,37 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
       ss.per_round, ss.budget, used, ss.tol);
   say("Search start: loglik %f\n", ll);
   std::vector<Move> moves = make_moves(D, m, x, ss);
-  std::shuffle(moves.begin(), moves.end(), rng);
+  order_moves(moves, rng, ss);
   size_t next = 0;
-  Vec y(x.size()), z;
+  // --search-par: one model per concurrent refit (a Model holds per-fit buffers and flags)
+  const int nslot = ss.par ? ss.per_round : 1;
+  std::vector<std::unique_ptr<Model<Data>>> extra;
+  std::vector<Model<Data>*> models{&m};
+  for (int t = 1; t < nslot; t++) {
+    extra.emplace_back(new Model<Data>(D, K));
+    extra.back()->use_smallk_kernels = m.use_smallk_kernels;
+    extra.back()->PMIN = m.PMIN, extra.back()->PMAX = m.PMAX, extra.back()->QMIN = m.QMIN;
+    models.push_back(extra.back().get());
+  }
+  int idle = 0;  // rounds in a row without an accepted move
   while (next < moves.size() && res.used + ss.per_round * ss.refit_cost <= ss.budget + 1e-9) {
+    if (ss.patience > 0 && idle >= ss.patience) {
+      say("Search: %d rounds without an accepted move; stopping\n", idle);
+      break;
+    }
     res.rounds++;
-    double best_ll = -INFINITY;
-    Vec best_x;
-    std::vector<std::string> rows;  // table rows of this round (the accepted flag is known at its end)
-    size_t best_row = 0;
     const size_t end = std::min(moves.size(), next + ss.per_round);
-    for (; next < end; next++) {
-      const Move& mv = moves[next];
+    const int nm = end - next;
+    // the moved starting points, P drawn at random in the order of the moves (as without --search-par)
+    std::vector<Vec> zs(nm);
+    std::vector<unsigned long> seeds(nm);
+    std::uniform_real_distribution<double> unif(0.0, 1.0);
+    for (int u = 0; u < nm; u++) {
+      const Move& mv = moves[next + u];
+      Vec& z = zs[u];
       z = x;
       double* Q = z.data() + nP;
-      for (int i = 0; i < D.N; i++) {
+      for (int i = 0; i < N; i++) {
         double* q = Q + (size_t)i * K;
         q[mv.a] += q[mv.b], q[mv.b] = 0;
       }
@@ -231,44 +310,82 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
         double* q = Q + (size_t)i * K;
         q[mv.b] = q[mv.c], q[mv.c] = 0;
       }
-      // P: random start, then EM steps with every row of Q held fixed
-      std::uniform_real_distribution<double> unif(0.0, 1.0);
       for (size_t t = 0; t < nP; t++) z[t] = 0.05 + 0.9 * unif(rng);
-      m.project(z.data());
-      std::fill(m.qfix.begin(), m.qfix.end(), 1);
+      seeds[u] = fs.seed + 7919 * (res.refits + u + 1);
+    }
+    std::vector<FitResult> rs(nm);
+    // one refit: P by EM steps with Q held fixed, then warm-up and quasi-Newton (stopped early by --search-abort)
+    auto refit = [&](Model<Data>& mm, int u) {
+      Vec& z = zs[u];
+      Vec y(z.size());
+      mm.project(z.data());
+      std::fill(mm.qfix.begin(), mm.qfix.end(), 1);
       for (int e = 0; e < ss.p_em; e++) {
-        m.em(z.data(), y.data());
+        mm.em(z.data(), y.data());
         z.swap(y);
       }
-      std::fill(m.qfix.begin(), m.qfix.end(), 0);
+      std::fill(mm.qfix.begin(), mm.qfix.end(), 0);
       FitSettings fr = fs;
-      fr.prime = 0, fr.tol = ss.tol, fr.seed = fs.seed + 7919 * (res.refits + 1);
-      Fitter<Model<Data>> fit(m, fr);
+      fr.prime = 0, fr.tol = ss.tol, fr.seed = seeds[u];
+      Fitter<Model<Data>> fit(mm, fr);
       fit.verbose = false;
-      const FitResult r = fit.run(z);
-      res.refits++, res.used += ss.refit_cost;
+      if (ss.abort > 0)
+        fit.after_warmup = [&](const Vec& v, double lv) {
+          return lv < ll - ss.abort || q_distance(v.data() + nP, x.data() + nP, N, K).max_abs < 0.01;
+        };
+      rs[u] = fit.run(z);
+    };
+    if (nslot > 1 && nm > 1) {
+      const int threads = omp_get_max_threads(), each = std::max(1, threads / nm);
+      omp_set_max_active_levels(2);
+#pragma omp parallel num_threads(nm)
+      {
+        const int u = omp_get_thread_num();
+        omp_set_num_threads(each);
+        refit(*models[u], u);
+      }
+      omp_set_max_active_levels(1);
+    } else {
+      for (int u = 0; u < nm; u++) refit(m, u);
+    }
+    double best_ll = -INFINITY;
+    int best_u = -1;
+    std::vector<std::string> rows;  // table rows of this round (the accepted flag is known at its end)
+    for (int u = 0; u < nm; u++) {
+      const Move& mv = moves[next + u];
+      const FitResult& r = rs[u];
+      res.refits++, res.used += r.stopped ? ss.abort_cost : ss.refit_cost;
       say("Search round %d: merge %d into %d, split %d (%zu individuals moved): loglik %f (%+.2f), %d iterations, "
-          "%.1f sec\n", res.rounds, mv.b + 1, mv.a + 1, mv.c + 1, mv.half.size(), r.loglik, r.loglik - ll,
-          r.iterations, r.seconds);
+          "%.1f sec%s\n", res.rounds, mv.b + 1, mv.a + 1, mv.c + 1, mv.half.size(), r.loglik, r.loglik - ll,
+          r.iterations, r.seconds, r.stopped ? "; stopped after the warm-up" : "");
       char row[160];
       std::snprintf(row, sizeof row, "%d\t%d\t%d\t%d\t%zu\t%.6f\t%.6f", res.rounds, mv.a + 1, mv.b + 1, mv.c + 1,
                     mv.half.size(), r.loglik, r.loglik - ll);
       rows.push_back(row);
-      if (r.loglik > best_ll) best_ll = r.loglik, best_x = z, best_row = rows.size() - 1;
+      if (!r.stopped && r.loglik > best_ll) best_ll = r.loglik, best_u = u;
     }
-    const bool accept = best_ll > ll + 0.01;
+    next = end;
+    const bool accept = best_u >= 0 && best_ll > ll + 0.01;
     if (tf)
-      for (size_t u = 0; u < rows.size(); u++) std::fprintf(tf, "%s\t%d\n", rows[u].c_str(), accept && u == best_row);
+      for (size_t u = 0; u < rows.size(); u++) std::fprintf(tf, "%s\t%d\n", rows[u].c_str(), accept && (int)u == best_u);
     if (accept) {
       say("Search round %d: accepted, loglik %f -> %f\n", res.rounds, ll, best_ll);
-      ll = best_ll, x = best_x;
-      res.accepted++;
+      ll = best_ll, x = zs[best_u];
+      res.accepted++, idle = 0;
       moves = make_moves(D, m, x, ss);
-      std::shuffle(moves.begin(), moves.end(), rng);
+      order_moves(moves, rng, ss);
       next = 0;
+    } else {
+      idle++;
     }
   }
   if (tf) std::fclose(tf);
+  if (!ss.polish) {
+    res.loglik = ll;
+    say("Search: %d rounds, %d refits, %d moves accepted, %.1f of %g standard runs used; loglik %f\n", res.rounds,
+        res.refits, res.accepted, res.used, ss.budget, ll);
+    return res;
+  }
   // polish: from the best solution to the tolerance of a standard run, without EM steps or warm-up
   FitSettings fp = fs;
   fp.prime = 0, fp.minibatch = 0;
