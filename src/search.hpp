@@ -43,22 +43,17 @@ struct SearchSettings {
   double tol = 10;          // log-likelihood tolerance of the start and the refits (the winner is polished)
   int pc_snps = 50000;      // at most this many SNPs (evenly spaced) for the split direction
   int pc_iter = 30;         // power iterations for the split direction
-  double flip_tol = 1;      // cross-flips (--search with --conv): tolerance of the flip fits
+  double flip_tol = 1;      // cross-flips (mixing of --conv --search): tolerance of the flip fits
   double flip_gain = 1;     // a flip is kept if it raises the log-likelihood by more (gains below are fit noise)
-  // speed and move order (global_search/variants): early stop, patience 6 and split-first order are the default
-  // (the same hits as without them at about half the time on the real data); parallel refits and lineages are options
-  bool par = false;          // --search-par: the moves of a round refitted at once, threads split between them
-  double abort = 0;          // --search-abort=A: stop a refit after its warm-up if log L < current - A, or if it
-                             // is back at the current solution (max |dQ| < 0.01); 0 = off
-  double abort_frac = 0.001; // --search-abort-frac=F: the threshold is at least F |log L|; 0 = off (after the warm-up a refit
-                             // that wins in the end can still be 2,000-3,600 below on 6.3 million, so a fixed A
-                             // stopped the winners on the simulated hard sets)
+  // speed and move order (tested in global_search/variants): about half the time on real data, same hits
+  double abort_frac = 0.001; // --search-abort-frac=F: stop a refit after its warm-up if log L < current - F |log L|,
+                             // or if it is back at the current solution (max |dQ| < 0.01); 0 = off. Relative:
+                             // a refit that wins in the end can still be 2,000-3,600 below after its warm-up
+                             // (6.3 million on the simulated hard sets), and a fixed 1,000 stopped the winners
   double abort_cost = 0.35;  // charge of a refit stopped after its warm-up
   int patience = 6;          // --search-patience=R: stop after R rounds in a row without an accepted move; 0 = off
   bool order_split = true;   // --search-order=split: draw moves with weights = how strongly the split component
                              // falls into two groups (first / second eigenvalue); =random: uniformly
-  int lineages = 1;          // --search-lineages=L: successive halving over L lineages (admixer.cpp)
-  bool polish = true;        // polish the result to -C at the end (off between the phases of the lineages)
 };
 
 // Value of entry (j, i) for the split direction: genotype (copies of A2), or for GLs the expected genotype under
@@ -260,7 +255,7 @@ struct SearchResult {
 };
 
 // The search from x (a fitted solution with log-likelihood ll, at tolerance ss.tol). On return x is the best
-// solution, polished to -C unless ss.polish is false. fs: the settings of a standard run (warm-up, seed); the
+// solution, polished to -C. fs: the settings of a standard run (warm-up, seed); the
 // refits use its warm-up.
 template <class Data>
 SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const FitSettings& fs,
@@ -278,16 +273,6 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
   std::vector<Move> moves = make_moves(D, m, x, ss);
   order_moves(moves, rng, ss);
   size_t next = 0;
-  // --search-par: one model per concurrent refit (a Model holds per-fit buffers and flags)
-  const int nslot = ss.par ? ss.per_round : 1;
-  std::vector<std::unique_ptr<Model<Data>>> extra;
-  std::vector<Model<Data>*> models{&m};
-  for (int t = 1; t < nslot; t++) {
-    extra.emplace_back(new Model<Data>(D, K));
-    extra.back()->use_smallk_kernels = m.use_smallk_kernels;
-    extra.back()->PMIN = m.PMIN, extra.back()->PMAX = m.PMAX, extra.back()->QMIN = m.QMIN;
-    models.push_back(extra.back().get());
-  }
   int idle = 0;  // rounds in a row without an accepted move
   while (next < moves.size() && res.used + ss.per_round * ss.refit_cost <= ss.budget + 1e-9) {
     if (ss.patience > 0 && idle >= ss.patience) {
@@ -297,7 +282,7 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
     res.rounds++;
     const size_t end = std::min(moves.size(), next + ss.per_round);
     const int nm = end - next;
-    // the moved starting points, P drawn at random in the order of the moves (as without --search-par)
+    // the moved starting points, P drawn at random in the order of the moves
     std::vector<Vec> zs(nm);
     std::vector<unsigned long> seeds(nm);
     std::uniform_real_distribution<double> unif(0.0, 1.0);
@@ -318,7 +303,7 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
       seeds[u] = fs.seed + 7919 * (res.refits + u + 1);
     }
     std::vector<FitResult> rs(nm);
-    // one refit: P by EM steps with Q held fixed, then warm-up and quasi-Newton (stopped early by --search-abort)
+    // one refit: P by EM steps with Q held fixed, then warm-up and quasi-Newton (stopped early, abort_frac)
     auto refit = [&](Model<Data>& mm, int u) {
       Vec& z = zs[u];
       Vec y(z.size());
@@ -333,27 +318,15 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
       fr.prime = 0, fr.tol = ss.tol, fr.seed = seeds[u];
       Fitter<Model<Data>> fit(mm, fr);
       fit.verbose = false;
-      if (ss.abort > 0 || ss.abort_frac > 0) {
-        const double thr = std::max(ss.abort, ss.abort_frac * std::fabs(ll));
+      if (ss.abort_frac > 0) {
+        const double thr = ss.abort_frac * std::fabs(ll);
         fit.after_warmup = [&, thr](const Vec& v, double lv) {
           return lv < ll - thr || q_distance(v.data() + nP, x.data() + nP, N, K).max_abs < 0.01;
         };
       }
       rs[u] = fit.run(z);
     };
-    if (nslot > 1 && nm > 1) {
-      const int threads = omp_get_max_threads(), each = std::max(1, threads / nm);
-      omp_set_max_active_levels(2);
-#pragma omp parallel num_threads(nm)
-      {
-        const int u = omp_get_thread_num();
-        omp_set_num_threads(each);
-        refit(*models[u], u);
-      }
-      omp_set_max_active_levels(1);
-    } else {
-      for (int u = 0; u < nm; u++) refit(m, u);
-    }
+    for (int u = 0; u < nm; u++) refit(m, u);
     double best_ll = -INFINITY;
     int best_u = -1;
     std::vector<std::string> rows;  // table rows of this round (the accepted flag is known at its end)
@@ -386,12 +359,6 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
     }
   }
   if (tf) std::fclose(tf);
-  if (!ss.polish) {
-    res.loglik = ll;
-    say("Search: %d rounds, %d refits, %d moves accepted, %.1f of %g standard runs used; loglik %f\n", res.rounds,
-        res.refits, res.accepted, res.used, ss.budget, ll);
-    return res;
-  }
   // polish: from the best solution to the tolerance of a standard run, without EM steps or warm-up
   FitSettings fp = fs;
   fp.prime = 0, fp.minibatch = 0;

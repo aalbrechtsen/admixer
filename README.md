@@ -24,7 +24,7 @@ Details beyond everyday use (algorithms, performance, testing, differences from 
 
 Nothing else needs to be installed: OpenBLAS, zlib and the C++/OpenMP runtimes are built in. It runs on any
 x86_64 Linux with glibc 2.28 or newer (RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 10+), and uses AVX2 or
-AVX-512 when the CPU has it. The binary in `bin/` is the current version (0.2.11).
+AVX-512 when the CPU has it. The binary in `bin/` is the current version (0.2.12).
 
 ```
 wget https://github.com/aalbrechtsen/admixer/raw/main/bin/admixer-linux-x86_64.tar.gz
@@ -105,9 +105,8 @@ extension (`data`) as prefix:
 | `--conv X` | convergence test with several starts (see below): stop when X runs agree with the best run |
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
-| `--search[=X]` | search for a better optimum by split-merge moves, within a budget of X standard runs (default 20); see below |
-| `--search-lineages=L` | with `--search`: L searches with successive halving; the log says whether the two best agree |
-| `--svd[=0\|1]` | start from a randomised SVD of the genotypes + alternating least squares (as fastmixture) instead of a random start; default on for the first run of `--conv` (the other runs start at random), off otherwise |
+| `--search[=X]` | search for a better optimum by split-merge moves, within a budget of X standard runs (default 20); with `--conv`, independent searches until they agree; see below |
+| `--svd` | start from a randomised SVD of the genotypes + alternating least squares (as fastmixture) instead of a random start (with `--conv`: the first run only) |
 | `--Qin=FILE` | start from this Q (e.g. `NAME.K.Q` of an earlier run) instead of a random start; P is fitted to it |
 | `--Pin=FILE` | with `--Qin`: start from this P as well (`NAME.K.P.gz` or `.P`; for beagle input, the sites kept by the same filters) |
 | `--no-evaladmix` | do not compute the evalAdmix correlation of residuals |
@@ -120,8 +119,8 @@ extension (`data`) as prefix:
 | `--minInd=X` | beagle input: keep sites with more than X individuals with data (default 0 = off) |
 | `--keep-missing` | beagle input: use the missing GL entries as data (as NGSadmix's EM) instead of leaving them out |
 
-Advanced options for benchmarking (`--bound`, `--prime`, `--minibatch`, `--hess`, `--max-iter`): see
-[DETAILS.md](DETAILS.md#advanced-options).
+Advanced options for benchmarking (`--bound`, `--prime`, `--minibatch`, `--hess`, `--max-iter`) and for the
+search (`--search-patience`, `--search-abort-frac`, `--search-order`): see [DETAILS.md](DETAILS.md#advanced-options).
 
 Examples: `admixer -j16 data.bed 5`, `admixer -j16 input.beagle.gz 3`
 
@@ -144,11 +143,20 @@ moves: merge two components with similar allele frequencies, split another compo
 (along the first principal component of its individuals' genotypes), and refit. A move is kept if it raises
 the log-likelihood. The moves change which populations share a component in one step, which a random start
 rarely gets right. `--search=X` sets the budget in standard runs (default 20); the search stops earlier after
-6 rounds without an improvement, typically at 6–14 standard runs. `--search-lineages=4` runs 4 searches with
-successive halving and reports whether the two best agree, a convergence check at the same budget. `data.K.search` lists every move tried. Details:
-[DETAILS.md](DETAILS.md#split-merge-search---search).
+6 rounds without an improvement, typically after 6–14 standard runs. `data.K.search` lists every move tried.
+Details: [DETAILS.md](DETAILS.md#split-merge-search---search).
 
 Example: `admixer --search data.bed 11`
+
+**Is the search's result the best solution?** Use `--conv X --search`: independent searches (seeds `--seed`,
+`--seed`+1, ...), each from its own random start, until X of them agree with the best (as `--conv`; at most
+`--max_runs`). If they do not converge, the searches are mixed: a copy of the best search takes single
+individuals' states from the others when that raises the log-likelihood (cross-flips). The mix is written if it
+is the best result, and `data.K.conv` lists it as an extra row, `mix`. The log then says the result is the best
+found but not a converged solution. Each search costs 6–20 standard runs, so `--conv 3 --search` costs at least
+3 searches; a smaller `-m` (e.g. 5) limits the cost.
+
+Example: `admixer --conv 3 --search -m 5 data.bed 11`
 
 To continue an earlier solution, use `--Qin=data.11.Q` (and `--Pin=data.11.P.gz`); with `--search` the search
 starts from it.

@@ -190,12 +190,12 @@ pairs they end 279 and 26 below the best.
 On a 107,002-SNP subset of the same data, `--search=10` (seeds 3 and 7) reached the subset's best solution
 (−5,011,936.11), in 62 s against 5.9 s for a standard run.
 
-**Defaults, and the lineages option** (`global_search/variants`, 27 October 2026). The early stop, the patience
+**Defaults** (`global_search/variants`, 27 October 2026). The early stop, the patience
 stop and the weighted move order were tested on ten hard data sets, 10 seeds each, against the plain search
 (none of the three). A run counts if it reaches the best solution found on that set (max |ΔQ| < 0.01). Time in
 standard runs (median); reindeer on steve, the other sets on dylan (Xeon Gold 6152), 8 threads per run.
 
-| data (N, M, K) | standard run | plain search | default | `--search-lineages=4` |
+| data (N, M, K) | standard run | plain search | default | 4 lineages¹ |
 |---|---|---|---|---|
 | reindeer (96, 321,005, 8) | 5/10 | 10/10, 19.6× | 7/10, 7.6× | 10/10, 22.5× |
 | reindeer (96, 321,005, 9) | 3/10 | 8/10, 19.2× | 8/10, 9.9× | 10/10, 21.5× |
@@ -209,27 +209,57 @@ standard runs (median); reindeer on steve, the other sets on dylan (Xeon Gold 61
 So the default mostly reaches the best as often as the plain search, in about half the time on the real data.
 The exception is reindeer K = 8: three searches started close to the best (67 units below, 11 individuals
 different) and stopped after 6 rounds without an accepted move; the winning move came in rounds 8–11 with
-`--search-patience=0` (10/10, 15.5×). If the time allows, `--search-patience=0` or the lineages are safer.
+`--search-patience=0` (10/10, 15.5×). If the time allows, `--search-patience=0` is safer.
 Run alone, a search on 1000 Genomes chr20 (N = 2,590, M = 157,318, K = 10) took 25.5 standard runs: a refit
 costs about 0.6 there too, but the P fits and split directions add some.
-`--search-lineages=L` runs L searches from random starts: all L share half the budget, the better half go on
-with a quarter, and so on, the best one gets the rest. Before the last phase the two best lineages, which have
-shared nothing, are compared, and the log says whether they agree (max |ΔQ| < 0.01). In 31 of the 32 runs where
-they agreed they were at the best solution (the exception: reindeer K = 11). It is the most reliable setting
-and gives a convergence check, at the full budget.
+
+¹ Tested, not released: 4 searches from random starts sharing one budget by successive halving (all 4 share
+half, the better 2 a quarter, the best one the rest). When the two best, which shared nothing, agreed
+(max |ΔQ| < 0.01), they were at the best solution in 31 of 32 runs. `--conv X --search` (below) gives the same
+kind of independent check with full searches.
 
 On the simulated sets S2, C2, S5 and O8 (sister populations at Fst 0.01) the optima differ by tens to hundreds of
 log-likelihood units within the same partition, and no setting helps. A fixed early-stop threshold (1,000 units)
 stopped every refit there, also the winning ones (L2: 4/10), hence the threshold relative to |log L|. Refitting
-the two moves of a round at once (`--search-par`, threads split between them) was slower.
+the two moves of a round at once (threads split between them) was slower and was dropped.
+
+**Convergence check: `--conv X --search`.** Each `--conv` run is a full search from its own random start (seeds
+`--seed`, `--seed`+1, ...), and the searches share nothing. After each search the usual agreement test follows;
+the run stops when X searches agree with the best (max |ΔQ| < `--conv_thres`), and the log says "Converged".
+This is the same test as `--conv` with standard runs, only with searches.
+
+If `--max_runs` searches pass without X agreeing, the log says "Not converged", and the searches are mixed:
+* a copy of the best search takes single individuals' states from each search it disagrees with: the
+  individual's Q row from that search (columns matched), refitted to `-C 1`, and kept if the log-likelihood
+  rises by more than 1 (cross-flips, the individuals with the largest differences first);
+* this repeats over all searches while any flip is kept (at most 3 passes), and the mix is polished to `-C`;
+* the searches themselves are not changed. The mix is one more result, the row `mix` in `NAME.K.conv`, and it
+  is written if it has the highest log-likelihood.
+
+The status line comes from the independent searches only. An earlier version let the runs take each other's
+states before every agreement test: on reindeer K = 11 (`--search=10 --conv 2/3`), 20 of 20 replicates then
+reported "converged", but only 2 were at the best solution, because the runs were made to agree. The mix is the
+best found, not a converged solution, and the log says so; to check it, run `--search` with other seeds and
+compare their Q with it.
+
+Tests (reindeer, steve, 8 threads; standard run 22.5 s at K = 10 and 23.9 s at K = 11):
+
+| | result | time |
+|---|---|---|
+| K = 10, `--conv 3 --search`, seeds 1 and 101 | converged after 3 and 4 searches, at the best solution (max \|ΔQ\| < 1e-4) | 490 s (22×) |
+| K = 11, `--conv 3 --search`, seeds 1 and 101 | converged after 7 and 9 searches, at −15,043,018.02: 26 below the best, 2 individuals differ (max \|ΔQ\| 0.058) | 1,894–1,955 s (80×) |
+| K = 11, `--conv 6 --search -m 6`, seed 1 (cannot converge) | not converged; the mix (1 flip kept, 208 s) is the best solution, −15,042,991.78 (max \|ΔQ\| 6e-6) | 1,928 s (81×) |
+
+So agreement of independent searches is good evidence, not proof: at K = 11, three searches agreed on an
+optimum 26 units below the best, which the mixing of the same kind of searches reaches.
 
 **Limits.**
 * The search is local, and some optima cannot be left by any split-merge move. In the run that ended 23,402
   below the best (seed 1), two South Greenland individuals shared the component of the two Olrik_Fjord
   individuals. Moving those two individuals back to the South Greenland component leaves this optimum
   (+22,918 after the refit). But a split-merge move always merges two components, and splits only a third
-  one, so it cannot do that. If several `--search` runs (different seeds) disagree, keep the highest
-  log-likelihood.
+  one, so it cannot do that. Use `--conv X --search` to see whether independent searches agree; if not, the
+  mix of the searches keeps the best individual states found.
 * For GLs the refits have no warm-up by default (`--minibatch=0`), so each costs more than the charge. The
   search runs and is tested on the test data, but its budget is not calibrated for GLs.
 
@@ -245,7 +275,7 @@ admix_prog (`src/init.hpp`) and works as SCOPE and fastmixture do:
 
 The random test matrix and the ALS start depend on the seed. GLs use the expected genotypes.
 
-**Default.** On for the first run of `--conv` (the other runs start at random), off otherwise. A single
+**Default.** Off; with `--conv` it is used for the first run only (the other runs start at random). A single
 deterministic start rules out restarts (speed-up note 11), so it is one start among random ones.
 
 Tests: 10 seeds each, 8 threads; compared with the best solution found by max |ΔQ| < 0.01.
@@ -256,7 +286,7 @@ Tests: 10 seeds each, 8 threads; compared with the best solution found by max |�
 | reindeer, N = 96, M = 321,005, K = 11 | 0/10 | 0/10 (9 of 10 72,000–75,000 below) | 2.9–4.7 (SVD/ALS 14–53 s) |
 
 * On the reindeer data the SVD start was no better than a random start. As the first run of
-  `--conv 3 -m 10` it ranked 2nd–7th of 10 runs, and no replicate converged.
+  `--svd --conv 3 -m 10` it ranked 2nd–7th of 10 runs, and no replicate converged.
 * As the start of `--search` it reached the best in 1 of 10 runs (random start: 2 of 10), so the search
   keeps random starts unless `--svd` is given.
 * For comparison: fastmixture 1.3.0, whose default start is the same kind of SVD/ALS, reached the
@@ -338,6 +368,14 @@ of mini-batches of the warm-up), `--hess=exact|em` (curvature of the Newton step
 0.5, 0 = ADMIXTURE's rule), `--smallk=0|1` (register-blocked kernels for K = 2–7 instead of OpenBLAS; default 1),
 `--hess-float=auto|0|1` (single-precision Newton Hessians in the main algorithm;
 default auto: called genotypes with K ≥ 8) and `--max-iter=X`.
+
+For the search (`--search`; tests in [Split-merge search](#split-merge-search---search)):
+* `--search-patience=R`: stop after R rounds in a row without an accepted move (default 6; 0 = use the whole
+  budget). About halves the time on real data; on reindeer K = 8 it cost 3 of 10 hits (7/10 against 10/10).
+* `--search-abort-frac=F`: stop a refit after its warm-up if it is more than F · |log L| below the current
+  solution, or back at it (max |ΔQ| < 0.01); such a refit is charged 0.35 standard runs (default 0.001; 0 = off).
+* `--search-order=split|random`: draw the moves with weights λ1/λ2 of the split component (default `split`), or
+  uniformly.
 
 ## Performance
 

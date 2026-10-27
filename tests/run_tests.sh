@@ -167,6 +167,12 @@ run e7 sim.bed 3 --Qin=plink.3.Q --conv 2; ok "--Qin with --conv is rejected" "a
 run plink_sconv sim.bed 3 -s 1 --search=3 --conv 2 -m 3 --no-evaladmix
 ok "plink --search --conv: converged" "a == 1" "$(grep -c '^Converged: ' plink_sconv.3.log)"
 ok "plink --search --conv: one move table per run" "a >= 2" "$(ls plink_sconv.3.run*.search | wc -l)"
+ok "plink --search --conv: converged, so no mixing" "a == 0" "$(grep -c '^Mixing\|^mix' plink_sconv.3.log plink_sconv.3.conv | awk -F: '{s+=$2} END{print s}')"
+run plink_smix sim.bed 3 -s 1 --search=3 --conv 3 -m 2 --no-evaladmix
+ok "plink --search --conv 3 -m 2: not converged" "a == 1" "$(grep -c '^Not converged: ' plink_smix.3.log)"
+ok "plink --search --conv 3 -m 2: searches mixed, a mix row" "a == 1 && b == 1" "$(grep -c '^Mixing the 2 searches' plink_smix.3.log)" "$(grep -c '^mix' plink_smix.3.conv)"
+ok "plink --search --conv 3 -m 2: log L >= the best search" "a >= b - $LLTOL" "$(ll_of plink_smix.3.log)" \
+  "$(awk 'NR > 1 && $1 != "mix" {print $3}' plink_smix.3.conv | sort -g | tail -1)"
 # --svd: SVD/ALS start (randomised SVD + alternating least squares)
 run plink_svd sim.bed 3 -s 1 --svd --no-evaladmix
 ok "plink --svd: exit code 0" "a == 0" "$(cat plink_svd.rc)"
@@ -175,18 +181,17 @@ ok "plink --svd: same optimum as the random start (|dll| < 0.01)" "a < 0.01 && a
   "$(awk -v a="$(ll_of plink_svd.3.log)" -v b="$(ll_of plink.3.log)" 'BEGIN{print a-b}')"
 run plink_svd0 sim.bed 3 -s 1 --conv 2 -m 3 --svd=0 --no-evaladmix
 ok "plink --conv --svd=0: no SVD start" "a == 0" "$(grep -c '^Start: SVD/ALS' plink_svd0.3.log)"
-ok "plink --conv: SVD start for the first run" "a == 1" "$(grep -c '^Start: SVD/ALS' plink_conv.3.log)"
+ok "plink --conv: no SVD start unless --svd" "a == 0" "$(grep -c '^Start: SVD/ALS' plink_conv.3.log)"
 # --search: split-merge moves within a budget of standard runs
 run plink_search sim.bed 3 -s 1 --search=4 --no-evaladmix
 ok "plink --search: exit code 0" "a == 0" "$(cat plink_search.rc)"
 ok "plink --search: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search.3.log)" "$(ll_of plink.3.log)"
 ok "plink --search: move table has a header and the refits" "a >= 3" "$(nrows plink_search.3.search)"
 formats plink_search 3 200 4000
-run plink_search_x sim.bed 3 -s 1 --search=4 --search-abort=1000 --search-patience=3 --search-order=split --search-par --no-evaladmix
-ok "plink --search with the experiment options: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search_x.3.log)" "$(ll_of plink.3.log)"
-run plink_search_l sim.bed 3 -s 1 --search=6 --search-lineages=4 --no-evaladmix
-ok "plink --search-lineages=4: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search_l.3.log)" "$(ll_of plink.3.log)"
-ok "plink --search-lineages=4: lineages compared" "a == 1" "$(grep -c '^Search lineages: the two best' plink_search_l.3.log)"
+run plink_search_x sim.bed 3 -s 1 --search=4 --search-patience=0 --search-abort-frac=0 --search-order=random --no-evaladmix
+ok "plink --search, patience/early stop off, random order: log L >= single run" "a >= b - $LLTOL" "$(ll_of plink_search_x.3.log)" "$(ll_of plink.3.log)"
+run plink_search_d sim.bed 3 -s 1 --search=4 --search-patience=6 --search-abort-frac=0.001 --search-order=split --no-evaladmix
+ok "plink --search: the defaults are patience 6, early stop 0.001, split order" "a == 0" "$(cmp -s plink_search.3.Q plink_search_d.3.Q; echo $?)"
 run plink_search_rep sim.bed 3 -s 1 --search=4 --no-evaladmix
 ok "plink --search: same seed, same Q" "a == 0" "$(cmp -s plink_search.3.Q plink_search_rep.3.Q; echo $?)"
 run plink_sup --supervised sim.bed 3 -s 1

@@ -29,7 +29,7 @@
 #include "search.hpp"
 #include "svdstart.hpp"
 
-static const char* VERSION = "0.2.11";
+static const char* VERSION = "0.2.12";
 
 static void usage(int code) {
   std::printf(
@@ -72,20 +72,20 @@ static void usage(int code) {
       "                      NAME.K.parental (unless --paired alone is given), --paired and --evaladmix outputs\n"
       "                      only; the log goes to NAME.K.from.log. Use the same input and filters as that run\n"
       "  --search[=X]        search for a better optimum by split-merge moves (merge two components, split\n"
-      "                      another), within a budget of X standard runs (default 20); writes NAME.K.search\n"
-      "                      (every move tried). For hard data (many local optima, large K); see DETAILS.md.\n"
-      "                      With --conv: each run is a search; runs that disagree exchange single individuals'\n"
-      "                      states (cross-flips) before the agreement test\n"
-      "  --search-lineages=L  run L searches from random starts with successive halving (L share half the\n"
-      "                      budget, the best half go on, ...) and report whether the two best agree\n"
-      "                      (max |dQ| < 0.01): an independent convergence check at the same budget\n"
-      "  --search-patience=R, --search-abort-frac=F, --search-order=split|random: stop after R rounds\n"
-      "                      without an accepted move (default 6; 0 = off); stop a refit after its warm-up if it\n"
-      "                      is F |log L| below (default 0.001; 0 = off) or back at the current solution; draw\n"
-      "                      moves by how clearly the split component falls in two groups (default) or uniformly\n"
+      "                      another) from a random start, within a budget of X standard runs (default 20; it\n"
+      "                      stops earlier after 6 rounds without an improvement); writes NAME.K.search (every\n"
+      "                      move tried). For hard data (many local optima, large K); see DETAILS.md.\n"
+      "                      With --conv X: independent searches until X agree; if they do not, the searches\n"
+      "                      are mixed (single individuals' states, cross-flips) into one more result, which\n"
+      "                      is written if it is the best, and the log says it is not a converged solution\n"
+      "  --search-patience=R  stop a search after R rounds in a row without an improvement (default 6; 0 =\n"
+      "                      use the whole budget, slower but safer)\n"
+      "  --search-abort-frac=F  stop a refit after its warm-up if it is more than F |log L| below the current\n"
+      "                      solution, or back at it (default 0.001; 0 = off)\n"
+      "  --search-order=split|random  try first the splits of components whose individuals fall clearly into\n"
+      "                      two groups (default), or in random order\n"
       "  --svd[=0|1]         start from a randomised SVD of the genotypes + alternating least squares (as\n"
-      "                      fastmixture) instead of a random start. Default: on for the first run of --conv\n"
-      "                      (the other runs start at random), off otherwise (also for --search)\n"
+      "                      fastmixture) instead of a random start (with --conv: the first run only)\n"
       "  --Qin=FILE          start from this Q (N x K, e.g. NAME.K.Q of an earlier run) instead of a random\n"
       "                      start; P is fitted to it (20 EM steps with Q fixed) unless --Pin is given\n"
       "  --Pin=FILE          with --Qin: start from this P (M x K, NAME.K.P[.gz]; GLs: the sites kept by the\n"
@@ -137,7 +137,7 @@ struct Options {
   std::string qin, pin;  // --Qin/--Pin: start from this Q (and P)
   SearchSettings ss;
   bool search = false;  // --search
-  int svd = -1;         // --svd: SVD/ALS start (-1: the first run of --conv)
+  int svd = 0;          // --svd: SVD/ALS start (the first run of --conv)
   std::string thread_note;  // why -j was capped, or that it exceeds the physical cores (printed in the log)  // --smallk: register-blocked kernels for small K instead of OpenBLAS in the Newton steps
 };
 
@@ -321,12 +321,14 @@ static void analyse(Data& D, Options& o, double t0) {
     std::vector<float> Q;
     QDistance d;
     bool agrees = false;
+    bool mix = false;  // the mixed result of --conv --search (not a run)
   };
   std::vector<Run> runs;
-  std::vector<Vec> xs;  // --search with --conv: every run's solution (P and Q), for the cross-flips
+  std::vector<Vec> xs;  // --search with --conv: every search's solution (P and Q), for the mixing
   Vec x, best_x;
   int best = -1, agreeing = 0;
   for (int r = 0; r < nruns; r++) {
+    const double t_run = omp_get_wtime();
     FitSettings fr = fs;
     fr.seed = fs.seed + r;
     x = x0;
@@ -351,7 +353,7 @@ static void analyse(Data& D, Options& o, double t0) {
       fr.prime = o.prime >= 0 ? o.prime : 0;
       fr.minibatch = o.minibatch >= 0 ? o.minibatch : 0;
     }
-    if (r == 0 && o.qin.empty() && (o.svd == 1 || (o.svd < 0 && o.conv > 0))) {
+    if (r == 0 && o.qin.empty() && o.svd == 1) {
       // SVD/ALS start (svdstart.hpp); it replaces the EM priming and the warm-up unless they are asked for
       const SvdInfo si = svd_start(D, m, x, fr.seed);
       say("Start: SVD/ALS (rank %d, %d ALS iterations, %.1f sec)\n", K - 1, si.als_iter, si.seconds);
@@ -362,119 +364,18 @@ static void analyse(Data& D, Options& o, double t0) {
     Fitter<Model<Data>> fit(m, fr);
     fit.verbose = r == 0;  // iteration details for the first run only
     FitResult res = fit.run(x);
-    if (o.search && o.ss.lineages > 1 && o.conv == 0 && o.qin.empty()) {
-      // --search-lineages=L: successive halving. L lineages (this start and L-1 more random starts)
-      // share half of the budget; then the better half of them go on with an equal share of the rest, and so on
-      // until one is left, which is polished. Before the last phase the two survivors are compared (max |dQ|):
-      // they have exchanged nothing, so their agreement is an honest convergence check.
-      struct Lineage {
-        Vec x;
-        double ll, used;
-        unsigned long seed;
-      };
-      const int L = o.ss.lineages;
-      std::vector<Lineage> lin;
-      lin.push_back({x, res.loglik, o.ss.start_cost, fr.seed});
-      for (int l = 1; l < L; l++) {
-        FitSettings fl = fr;
-        fl.seed = fs.seed + 10007 * l;
-        Vec xl = x0;
-        std::mt19937_64 rl(fl.seed);
-        Fitter<Model<Data>>(m, fl).init_random(xl, rl);
-        Fitter<Model<Data>> fitl(m, fl);
-        fitl.verbose = false;
-        const double lll = fitl.run(xl).loglik;
-        lin.push_back({xl, lll, o.ss.start_cost, fl.seed});
-        say("Search lineage %d (seed %lu): start loglik %f\n", l + 1, fl.seed, lll);
-      }
-      std::vector<int> alive(L);
-      std::iota(alive.begin(), alive.end(), 0);
-      int nphase = 1;
-      for (int n = L; n > 1; n = (n + 1) / 2) nphase++;
-      double share = o.ss.budget / 2;  // the first phase; the later phases share the other half equally
-      for (int phase = 0; phase < nphase; phase++) {
-        const bool last = phase == nphase - 1;
-        for (int l : alive) {
-          SearchSettings sl = o.ss;
-          sl.polish = last;
-          sl.budget = lin[l].used + share / alive.size();
-          FitSettings fl = fs;
-          fl.seed = lin[l].seed + 31 * phase;
-          say("Search lineage %d, phase %d: budget %.2f standard runs\n", l + 1, phase + 1, share / alive.size());
-          const SearchResult sr = run_search(D, m, lin[l].x, lin[l].ll, fl, sl, lin[l].used,
-                                             last ? o.out + "." + std::to_string(K) + ".search" : "");
-          lin[l].ll = sr.loglik, lin[l].used = sr.used;
-          if (last) res.iterations = sr.iterations;
-        }
-        if (last) break;
-        std::stable_sort(alive.begin(), alive.end(), [&](int a, int b) { return lin[a].ll > lin[b].ll; });
-        alive.resize((alive.size() + 1) / 2);
-        if (alive.size() == 1) {
-          // the two best lineages before the last phase
-          std::vector<int> two = alive;
-          if (two.size() == 1) {
-            std::vector<int> all(L);
-            std::iota(all.begin(), all.end(), 0);
-            std::stable_sort(all.begin(), all.end(), [&](int a, int b) { return lin[a].ll > lin[b].ll; });
-            two = {all[0], all[1]};
-          }
-          const QDistance d = q_distance(lin[two[0]].x.data() + m.nP, lin[two[1]].x.data() + m.nP, D.N, K);
-          say("Search lineages: the two best (%d, %d) %s (max |dQ| %.4f, loglik %f and %f)\n", two[0] + 1, two[1] + 1,
-              d.max_abs < 0.01 ? "agree" : "differ", d.max_abs, lin[two[0]].ll, lin[two[1]].ll);
-        }
-        share = o.ss.budget / 2 / (nphase - 1);
-      }
-      x = lin[alive[0]].x;
-      double used = 0;
-      for (const auto& g : lin) used += g.used;
-      res.loglik = lin[alive[0]].ll, res.seconds = omp_get_wtime() - t0;
-      say("Search lineages: %d lineages, %.1f of %g standard runs used; best lineage %d, loglik %f\n", L, used,
-          o.ss.budget, alive[0] + 1, res.loglik);
-    } else if (o.search) {  // split-merge search from this fit
+    if (o.search) {  // split-merge search from this fit
       const SearchResult sr =
           run_search(D, m, x, res.loglik, fs, o.ss, o.qin.empty() ? o.ss.start_cost : 0.5,
                      o.out + "." + std::to_string(K) + (o.conv > 0 ? ".run" + std::to_string(r + 1) : "") + ".search");
-      res.loglik = sr.loglik, res.iterations = sr.iterations, res.seconds = omp_get_wtime() - t0;
+      res.loglik = sr.loglik, res.iterations = sr.iterations, res.seconds = omp_get_wtime() - t_run;
     }
     Run run{fr.seed, res.loglik, res.seconds, res.iterations,
             std::vector<float>(x.begin() + m.nP, x.end()), QDistance(), false};
     runs.push_back(std::move(run));
     if (best < 0 || res.loglik > runs[best].loglik) best = r, best_x = x;
     if (o.conv == 0) break;
-    if (o.search) {
-      // Cross-flips: the best run takes single individuals' states from every run it disagrees with, and that
-      // run takes the best run's states (search.hpp, cross_flip); changed runs are polished to -C. Repeated while
-      // anything changes (at most 3 passes).
-      xs.push_back(x);
-      FitSettings fp = fs;
-      fp.prime = 0, fp.minibatch = 0;
-      auto polish = [&](int u) {
-        Fitter<Model<Data>> fit(m, fp);
-        fit.verbose = false;
-        runs[u].loglik = fit.run(xs[u]).loglik;
-        runs[u].Q.assign(xs[u].begin() + m.nP, xs[u].end());
-      };
-      bool changed = runs.size() > 1;
-      for (int pass = 0; changed && pass < 3; pass++) {
-        changed = false;
-        for (int u = 0; u < (int)runs.size(); u++) {
-          if (u == best || q_distance(runs[u].Q.data(), runs[best].Q.data(), D.N, K).max_abs < o.conv_thres) continue;
-          char w1[64], w2[64];
-          std::snprintf(w1, sizeof w1, "run %d <- run %d", best + 1, u + 1);
-          std::snprintf(w2, sizeof w2, "run %d <- run %d", u + 1, best + 1);
-          const std::vector<float> Qb = runs[best].Q, Qu = runs[u].Q;
-          const FlipResult f1 = cross_flip(m, xs[best], Qu, fs, o.ss, w1);
-          const FlipResult f2 = cross_flip(m, xs[u], Qb, fs, o.ss, w2);
-          say("Cross-flips between runs %d and %d: %d of %d and %d of %d flips kept\n", best + 1, u + 1, f1.kept,
-              f1.flips, f2.kept, f2.flips);
-          if (f1.kept) polish(best), changed = true;
-          if (f2.kept) polish(u), changed = true;
-        }
-        for (int u = 0; u < (int)runs.size(); u++)
-          if (runs[u].loglik > runs[best].loglik) best = u;
-      }
-      best_x = xs[best];
-    }
+    if (o.search) xs.push_back(x);
     // agreement of every run with the current best run (the best can change, so recompute all)
     agreeing = 0;
     for (auto& u : runs) {
@@ -486,12 +387,58 @@ static void analyse(Data& D, Options& o, double t0) {
         r + 1, fr.seed, res.loglik, res.iterations, res.seconds, runs.back().d.max_abs, agreeing, r + 1);
     if (agreeing >= o.conv) break;
   }
+  // the convergence test is that of the independent runs (searches), before any mixing
+  const int nrun = runs.size(), best_run = best;
+  const char* unit = o.search ? "searches" : "runs";
+  if (o.search && o.conv > 0 && agreeing < o.conv && nrun > 1) {
+    // --conv --search, not converged: mix the searches. A copy of the best search takes single individuals' states
+    // from each other search it disagrees with (search.hpp, cross_flip), repeated while any flip is kept (at most
+    // 3 passes), then polished to -C. The searches are left as they are; the mix is one more result.
+    say("Mixing: %d of %d searches agree with the best search (seed %lu); mixing them (cross-flips)\n",
+        agreeing, nrun, runs[best].seed);
+    const double t_mix = omp_get_wtime();
+    Vec xm = xs[best];
+    int kept = 0;
+    for (int pass = 0, changed = 1; changed && pass < 3; pass++) {
+      changed = 0;
+      for (int u = 0; u < nrun; u++) {
+        if (u == best_run || q_distance(runs[u].Q.data(), xm.data() + m.nP, D.N, K).max_abs < o.conv_thres) continue;
+        char w[64];
+        std::snprintf(w, sizeof w, "mix <- run %d", u + 1);
+        const FlipResult f = cross_flip(m, xm, runs[u].Q, fs, o.ss, w);
+        say("Mixing, pass %d: run %d, %d of %d flips kept\n", pass + 1, u + 1, f.kept, f.flips);
+        kept += f.kept, changed |= f.kept > 0;
+      }
+    }
+    FitSettings fp = fs;
+    fp.prime = 0, fp.minibatch = 0;
+    Fitter<Model<Data>> fit(m, fp);
+    fit.verbose = false;
+    const FitResult fm = fit.run(xm);
+    Run mr{0, fm.loglik, omp_get_wtime() - t_mix, fm.iterations, std::vector<float>(xm.begin() + m.nP, xm.end()),
+           QDistance(), false, true};
+    runs.push_back(std::move(mr));
+    if (fm.loglik > runs[best].loglik) best = nrun, best_x = xm;
+    say("Mixing the %d searches: %d flips kept, loglik %f (%+.2f over the best search), %.1f sec; %s\n", nrun, kept,
+        fm.loglik, fm.loglik - runs[best_run].loglik, runs.back().seconds,
+        best == nrun ? "written as the result" : "the best search is written");
+    for (auto& u : runs) {
+      u.d = q_distance(u.Q.data(), runs[best].Q.data(), D.N, K);
+      u.agrees = u.d.max_abs < o.conv_thres;
+    }
+  }
   x = best_x;
   const auto kkt = m.kkt(x.data());
   say("Summary: \n");
   if (o.conv > 0) {
-    say("%s: %d of %d runs agree with the best run (seed %lu, max |dQ| < %g)\n",
-        agreeing >= o.conv ? "Converged" : "Not converged", agreeing, (int)runs.size(), runs[best].seed, o.conv_thres);
+    say("%s: %d of %d %s agree with the best %s (seed %lu, max |dQ| < %g)\n",
+        agreeing >= o.conv ? "Converged" : "Not converged", agreeing, nrun, unit,
+        o.search ? "search" : "run", runs[best_run].seed, o.conv_thres);
+    if (best != best_run || (int)runs.size() > nrun) {
+      say("The result is the mix of the %d searches, the best found but not a converged solution. To check it, run\n"
+          "--search with other seeds (e.g. -s %lu, -s %lu) and compare their Q with this one (same solution: max |dQ|\n"
+          "< %g)\n", nrun, fs.seed + nrun, fs.seed + nrun + 1, o.conv_thres);
+    }
     const std::string fn = o.out + "." + std::to_string(K) + ".conv";
     FILE* fp = std::fopen(fn.c_str(), "w");
     if (!fp) throw std::runtime_error("cannot write " + fn);
@@ -501,7 +448,8 @@ static void analyse(Data& D, Options& o, double t0) {
     std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return runs[a].loglik > runs[b].loglik; });
     for (size_t r : order) {
       const Run& u = runs[r];
-      std::fprintf(fp, "%zu\t%lu\t%.6f\t%.6f\t%.6g\t%.6g\t%.6g\t%d\t%.2f\t%d\n", r + 1, u.seed, u.loglik,
+      const std::string run = u.mix ? "mix" : std::to_string(r + 1), seed = u.mix ? "-" : std::to_string(u.seed);
+      std::fprintf(fp, "%s\t%s\t%.6f\t%.6f\t%.6g\t%.6g\t%.6g\t%d\t%.2f\t%d\n", run.c_str(), seed.c_str(), u.loglik,
                    u.loglik - runs[best].loglik, u.d.max_abs, u.d.mean_sum, u.d.rmse, u.iters, u.seconds, (int)u.agrees);
     }
     std::fclose(fp);
@@ -547,13 +495,10 @@ int main(int argc, char** argv) {
     else if (s == "--keep-missing") o.glf.skip_missing = false;
     else if (s == "--svd") o.svd = 1;
     else if (s.rfind("--svd=", 0) == 0) o.svd = std::atoi(s.substr(6).c_str()) != 0;
-    else if (s == "--search-par") o.ss.par = true;
-    else if (s.rfind("--search-abort=", 0) == 0) o.ss.abort = std::atof(s.substr(15).c_str());
     else if (s.rfind("--search-abort-frac=", 0) == 0) o.ss.abort_frac = std::atof(s.substr(20).c_str());
     else if (s.rfind("--search-patience=", 0) == 0) o.ss.patience = std::atoi(s.substr(18).c_str());
     else if (s == "--search-order=split") o.ss.order_split = true;
     else if (s == "--search-order=random") o.ss.order_split = false;
-    else if (s.rfind("--search-lineages=", 0) == 0) o.ss.lineages = std::max(1, std::atoi(s.substr(18).c_str()));
     else if (s == "--search") o.search = true;
     else if (s.rfind("--search=", 0) == 0) o.search = true, o.ss.budget = std::atof(s.substr(9).c_str());
     else if (s.rfind("--Qin", 0) == 0) o.qin = opt_value(argc, argv, a, "--Qin");
