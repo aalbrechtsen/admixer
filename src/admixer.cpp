@@ -542,6 +542,7 @@ int main(int argc, char** argv) {
     else if (s.rfind("--svd=", 0) == 0) o.svd = std::atoi(s.substr(6).c_str()) != 0;
     else if (s == "--search-par") o.ss.par = true;
     else if (s.rfind("--search-abort=", 0) == 0) o.ss.abort = std::atof(s.substr(15).c_str());
+    else if (s.rfind("--search-abort-frac=", 0) == 0) o.ss.abort_frac = std::atof(s.substr(20).c_str());
     else if (s.rfind("--search-patience=", 0) == 0) o.ss.patience = std::atoi(s.substr(18).c_str());
     else if (s == "--search-order=split") o.ss.order_split = true;
     else if (s == "--search-order=random") o.ss.order_split = false;

@@ -49,6 +49,9 @@ struct SearchSettings {
   bool par = false;          // --search-par: the moves of a round refitted at once, threads split between them
   double abort = 0;          // --search-abort=A: stop a refit after its warm-up if log L < current - A, or if it
                              // is back at the current solution (max |dQ| < 0.01); 0 = off
+  double abort_frac = 0;     // --search-abort-frac=F: the threshold is at least F |log L| (after the warm-up a refit
+                             // that wins in the end can still be 2,000-3,600 below on 6.3 million, so a fixed A
+                             // stopped the winners on the simulated hard sets)
   double abort_cost = 0.35;  // charge of a refit stopped after its warm-up
   int patience = 0;          // --search-patience=R: stop after R rounds in a row without an accepted move; 0 = off
   bool order_split = false;  // --search-order=split: draw moves with weights = how strongly the split component
@@ -329,10 +332,12 @@ SearchResult run_search(const Data& D, Model<Data>& m, Vec& x, double ll, const 
       fr.prime = 0, fr.tol = ss.tol, fr.seed = seeds[u];
       Fitter<Model<Data>> fit(mm, fr);
       fit.verbose = false;
-      if (ss.abort > 0)
-        fit.after_warmup = [&](const Vec& v, double lv) {
-          return lv < ll - ss.abort || q_distance(v.data() + nP, x.data() + nP, N, K).max_abs < 0.01;
+      if (ss.abort > 0 || ss.abort_frac > 0) {
+        const double thr = std::max(ss.abort, ss.abort_frac * std::fabs(ll));
+        fit.after_warmup = [&, thr](const Vec& v, double lv) {
+          return lv < ll - thr || q_distance(v.data() + nP, x.data() + nP, N, K).max_abs < 0.01;
         };
+      }
       rs[u] = fit.run(z);
     };
     if (nslot > 1 && nm > 1) {
