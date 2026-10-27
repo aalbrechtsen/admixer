@@ -45,17 +45,18 @@ struct SearchSettings {
   int pc_iter = 30;         // power iterations for the split direction
   double flip_tol = 1;      // cross-flips (--search with --conv): tolerance of the flip fits
   double flip_gain = 1;     // a flip is kept if it raises the log-likelihood by more (gains below are fit noise)
-  // experiments (global_search/variants): all off by default
+  // speed and move order (global_search/variants): early stop, patience 6 and split-first order are the default
+  // (the same hits as without them at about half the time on the real data); parallel refits and lineages are options
   bool par = false;          // --search-par: the moves of a round refitted at once, threads split between them
   double abort = 0;          // --search-abort=A: stop a refit after its warm-up if log L < current - A, or if it
                              // is back at the current solution (max |dQ| < 0.01); 0 = off
-  double abort_frac = 0;     // --search-abort-frac=F: the threshold is at least F |log L| (after the warm-up a refit
+  double abort_frac = 0.001; // --search-abort-frac=F: the threshold is at least F |log L|; 0 = off (after the warm-up a refit
                              // that wins in the end can still be 2,000-3,600 below on 6.3 million, so a fixed A
                              // stopped the winners on the simulated hard sets)
   double abort_cost = 0.35;  // charge of a refit stopped after its warm-up
-  int patience = 0;          // --search-patience=R: stop after R rounds in a row without an accepted move; 0 = off
-  bool order_split = false;  // --search-order=split: draw moves with weights = how strongly the split component
-                             // falls into two groups (first / second eigenvalue), instead of uniformly
+  int patience = 6;          // --search-patience=R: stop after R rounds in a row without an accepted move; 0 = off
+  bool order_split = true;   // --search-order=split: draw moves with weights = how strongly the split component
+                             // falls into two groups (first / second eigenvalue); =random: uniformly
   int lineages = 1;          // --search-lineages=L: successive halving over L lineages (admixer.cpp)
   bool polish = true;        // polish the result to -C at the end (off between the phases of the lineages)
 };

@@ -119,29 +119,35 @@ was 6,500 log-likelihood units below the best solution found. Two kinds of optim
      the merge two runs needed ranked 13th of 55 by d_ab and 3rd scaled.
    * The halves are the signs of the first principal component of those individuals' genotypes (GLs: the
      expected genotypes). It is computed by power iteration on at most 50,000 evenly spaced SNPs.
-   * There are up to 8 × (K − 2) moves (4–8 pairs). Each round refits 2 untried ones, drawn at random.
+   * There are up to 8 × (K − 2) moves (4–8 pairs). Each round refits 2 untried ones, drawn with weights
+     λ1/λ2 of the split component (the first two eigenvalues of its main individuals' centred genotypes, the
+     second by deflation): a component whose individuals clearly fall into two groups is split first.
+     `--search-order=random` draws them uniformly.
 2. **Refit.** P is fitted to the moved Q by 20 EM steps with Q held fixed, from a random P. Then the fit runs
    as usual (mini-batch warm-up, then quasi-Newton) to `-C 10`. Starting from the moved Q without the warm-up
-   took 4–5 times as long: the fit creeps along plateaus.
+   took 4–5 times as long: the fit creeps along plateaus. After the warm-up, a refit is stopped if its
+   log-likelihood is more than 0.1 % of |log L| below the current solution (`--search-abort-frac`), or if it is
+   back at the current solution (max |ΔQ| < 0.01).
 3. **Accept.** The better refit replaces the current solution if its log-likelihood is higher by more than
    0.01. Then the moves are rebuilt from the new solution.
 
-The search stops when the budget is used or no move is left. The best solution is then polished to `-C` (default
+The search stops when the budget is used, no move is left, or 6 rounds in a row accepted no move
+(`--search-patience`). The best solution is then polished to `-C` (default
 1e-4).
 
 **Budget.** X counts standard runs (a random start fitted to `-C 1e-4`). Each step has a fixed charge, so a
 run is reproducible for a given seed:
 * the loose start: 0.75 (0.5 with `--Qin`);
-* each refit: 0.6.
+* each refit: 0.6, or 0.35 if it is stopped after its warm-up.
 
-The default, 20, gives 16 rounds (32 refits). Measured: 19.7× the time of a standard run on the data below.
+The default, 20, allows 16 rounds (32 refits); with the patience stop most searches end earlier.
 
-**Why moves are drawn at random.** No cheap score predicted the winning move. On the reindeer data, the move
-that won after a full refit ranked 12th–30th of 36:
+**Why moves are drawn at random (weighted).** No cheap score predicted the winning move. On the reindeer
+data, the move that won after a full refit ranked 12th–30th of 36:
 * by the log-likelihood after the first iterations;
 * by the log-likelihood after fitting P alone.
 
-The ranking turns late, after a plateau.
+The ranking turns late, after a plateau. The λ1/λ2 weights only make likely splits come earlier.
 
 **Output.** `NAME.K.search` has one row per refit: round, the components merged (merge_into, merged) and split,
 the number of individuals moved, the log-likelihood (at `-C 10`), the gain over the current solution, and
@@ -152,7 +158,7 @@ whether the move was accepted. The log has the same per refit and a summary.
 `--prime`/`--minibatch` are given). `--search` and `--Qin` cannot be combined with `-P`, `--supervised`,
 `--conv` or `--from`.
 
-**Reindeer data, K = 11** (steve, 8 threads per run, 10 seeds each). Each run is compared with the best
+**Reindeer data, K = 11**, plain search (without the early stop, patience stop and weighted move order that are now the default; steve, 8 threads per run, 10 seeds each). Each run is compared with the best
 solution found (log L −15,042,991.78) by the largest difference in any Q entry, max |ΔQ|, after matching the
 components. Runs agree when max |ΔQ| < 0.01, the rule of `--conv`. A standard run takes 23.1 s, data reading
 included.
@@ -183,6 +189,33 @@ pairs they end 279 and 26 below the best.
 
 On a 107,002-SNP subset of the same data, `--search=10` (seeds 3 and 7) reached the subset's best solution
 (−5,011,936.11), in 62 s against 5.9 s for a standard run.
+
+**Defaults, and the lineages option** (`global_search/variants`, 27 October 2026). The early stop, the patience
+stop and the weighted move order were tested on ten hard data sets, 10 seeds each, against the plain search
+(none of the three). A run counts if it reaches the best solution found on that set (max |ΔQ| < 0.01). Time in
+standard runs (median); reindeer on steve, the other sets on dylan (Xeon Gold 6152), 8 threads per run.
+
+| data (N, M, K) | standard run | plain search | default | `--search-lineages=4` |
+|---|---|---|---|---|
+| reindeer (96, 321,005, 9) | 3/10 | 8/10, 19.2× | 8/10, 9.9× | 10/10, 21.5× |
+| reindeer (96, 321,005, 10) | 0/10 | 9/10, 17.7× | 9/10, 10.0× | 10/10, 20.4× |
+| reindeer (96, 321,005, 11) | 0/10 | 2/10, 19.4× | 0/10 (10/10 right partition), 14.1× | 0/10 (10/10 right partition), 21.6× |
+| blue wildebeest r02 (73, 185,861, 7) | 2/10 | 10/10, 17.2× | 10/10, 7.5× | 10/10, 19.0× |
+| blue wildebeest kenya2024 (73, 806,614, 7) | 8/10 | 10/10, 20.9× | 10/10, 7.7× | 10/10, 23.8× |
+| simulated L2 (600, 10,000, 10) | 4/10 | 9/10, 7.4× | 9/10, 6.0× | 9/10, 8.8× |
+| simulated S2, C2, S5, O8 (600–1000, 10,000–20,000, 8–12) | 0–1/10 | 0–1/10 | 0–1/10 | 0–1/10 |
+
+So the default reaches the best as often as the plain search, in about half the time on the real data.
+`--search-lineages=L` runs L searches from random starts: all L share half the budget, the better half go on
+with a quarter, and so on, the best one gets the rest. Before the last phase the two best lineages, which have
+shared nothing, are compared, and the log says whether they agree (max |ΔQ| < 0.01). In 31 of the 32 runs where
+they agreed they were at the best solution (the exception: reindeer K = 11). It is the most reliable setting
+and gives a convergence check, at the full budget.
+
+On the simulated sets S2, C2, S5 and O8 (sister populations at Fst 0.01) the optima differ by tens to hundreds of
+log-likelihood units within the same partition, and no setting helps. A fixed early-stop threshold (1,000 units)
+stopped every refit there, also the winning ones (L2: 4/10), hence the threshold relative to |log L|. Refitting
+the two moves of a round at once (`--search-par`, threads split between them) was slower.
 
 **Limits.**
 * The search is local, and some optima cannot be left by any split-merge move. In the run that ended 23,402

@@ -76,6 +76,13 @@ static void usage(int code) {
       "                      (every move tried). For hard data (many local optima, large K); see DETAILS.md.\n"
       "                      With --conv: each run is a search; runs that disagree exchange single individuals'\n"
       "                      states (cross-flips) before the agreement test\n"
+      "  --search-lineages=L  run L searches from random starts with successive halving (L share half the\n"
+      "                      budget, the best half go on, ...) and report whether the two best agree\n"
+      "                      (max |dQ| < 0.01): an independent convergence check at the same budget\n"
+      "  --search-patience=R, --search-abort-frac=F, --search-order=split|random: stop after R rounds\n"
+      "                      without an accepted move (default 6; 0 = off); stop a refit after its warm-up if it\n"
+      "                      is F |log L| below (default 0.001; 0 = off) or back at the current solution; draw\n"
+      "                      moves by how clearly the split component falls in two groups (default) or uniformly\n"
       "  --svd[=0|1]         start from a randomised SVD of the genotypes + alternating least squares (as\n"
       "                      fastmixture) instead of a random start. Default: on for the first run of --conv\n"
       "                      (the other runs start at random), off otherwise (also for --search)\n"
@@ -356,7 +363,7 @@ static void analyse(Data& D, Options& o, double t0) {
     fit.verbose = r == 0;  // iteration details for the first run only
     FitResult res = fit.run(x);
     if (o.search && o.ss.lineages > 1 && o.conv == 0 && o.qin.empty()) {
-      // --search-lineages=L (experiment): successive halving. L lineages (this start and L-1 more random starts)
+      // --search-lineages=L: successive halving. L lineages (this start and L-1 more random starts)
       // share half of the budget; then the better half of them go on with an equal share of the rest, and so on
       // until one is left, which is polished. Before the last phase the two survivors are compared (max |dQ|):
       // they have exchanged nothing, so their agreement is an honest convergence check.

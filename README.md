@@ -106,6 +106,7 @@ extension (`data`) as prefix:
 | `-m X`, `--max_runs=X` | with `--conv`: at most X runs (default 10) |
 | `--conv_thres=X` | with `--conv`: runs agree if the largest difference in any Q entry is below X (default 0.01) |
 | `--search[=X]` | search for a better optimum by split-merge moves, within a budget of X standard runs (default 20); see below |
+| `--search-lineages=L` | with `--search`: L searches with successive halving; the log says whether the two best agree |
 | `--svd[=0\|1]` | start from a randomised SVD of the genotypes + alternating least squares (as fastmixture) instead of a random start; default on for the first run of `--conv` (the other runs start at random), off otherwise |
 | `--Qin=FILE` | start from this Q (e.g. `NAME.K.Q` of an earlier run) instead of a random start; P is fitted to it |
 | `--Pin=FILE` | with `--Qin`: start from this P as well (`NAME.K.P.gz` or `.P`; for beagle input, the sites kept by the same filters) |
@@ -142,8 +143,9 @@ many more starts rarely find the best one. `--search` starts from one random sta
 moves: merge two components with similar allele frequencies, split another component in two
 (along the first principal component of its individuals' genotypes), and refit. A move is kept if it raises
 the log-likelihood. The moves change which populations share a component in one step, which a random start
-rarely gets right. `--search=X` sets the budget in standard runs (default 20; the run takes about X times as
-long as a standard run). `data.K.search` lists every move tried. Details:
+rarely gets right. `--search=X` sets the budget in standard runs (default 20); the search stops earlier after
+6 rounds without an improvement, typically at 6–14 standard runs. `--search-lineages=4` runs 4 searches with
+successive halving and reports whether the two best agree, a convergence check at the same budget. `data.K.search` lists every move tried. Details:
 [DETAILS.md](DETAILS.md#split-merge-search---search).
 
 Example: `admixer --search data.bed 11`
