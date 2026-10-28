@@ -167,7 +167,9 @@ run e7 sim.bed 3 --Qin=plink.3.Q --conv 2; ok "--Qin with --conv is rejected" "a
 run plink_sconv sim.bed 3 -s 1 --search=3 --conv 2 -m 3 --no-evaladmix
 ok "plink --search --conv: converged" "a == 1" "$(grep -c '^Converged: ' plink_sconv.3.log)"
 ok "plink --search --conv: one move table per run" "a >= 2" "$(ls plink_sconv.3.run*.search | wc -l)"
-ok "plink --search --conv: converged, so no mixing" "a == 0" "$(grep -c '^Mixing\|^mix' plink_sconv.3.log plink_sconv.3.conv | awk -F: '{s+=$2} END{print s}')"
+ok "plink --search --conv: converged, still mixed, a mix row" "a == 1 && b == 1" "$(grep -c '^Mixing the [0-9]* searches' plink_sconv.3.log)" "$(grep -c '^mix' plink_sconv.3.conv)"
+ok "plink --search --conv: log L >= the best search" "a >= b - $LLTOL" "$(ll_of plink_sconv.3.log)" \
+  "$(awk 'NR > 1 && $1 != "mix" {print $3}' plink_sconv.3.conv | sort -g | tail -1)"
 run plink_smix sim.bed 3 -s 1 --search=3 --conv 3 -m 2 --no-evaladmix
 ok "plink --search --conv 3 -m 2: not converged" "a == 1" "$(grep -c '^Not converged: ' plink_smix.3.log)"
 ok "plink --search --conv 3 -m 2: searches mixed, a mix row" "a == 1 && b == 1" "$(grep -c '^Mixing the 2 searches' plink_smix.3.log)" "$(grep -c '^mix' plink_smix.3.conv)"

@@ -228,19 +228,23 @@ the two moves of a round at once (threads split between them) was slower and was
 the run stops when X searches agree with the best (max |ΔQ| < `--conv_thres`), and the log says "Converged".
 This is the same test as `--conv` with standard runs, only with searches.
 
-If `--max_runs` searches pass without X agreeing, the log says "Not converged", and the searches are mixed:
+Then the searches are mixed, whether they converged or not (since 0.2.13; in 0.2.12 only when they did not):
 * a copy of the best search takes single individuals' states from each search it disagrees with: the
   individual's Q row from that search (columns matched), refitted to `-C 1`, and kept if the log-likelihood
   rises by more than 1 (cross-flips, the individuals with the largest differences first);
 * this repeats over all searches while any flip is kept (at most 3 passes), and the mix is polished to `-C`;
-* the searches themselves are not changed. The mix is one more result, the row `mix` in `NAME.K.conv`, and it
-  is written if it has the highest log-likelihood.
+* the searches themselves are not changed. The mix is one more result, the row `mix` in `NAME.K.conv`. It is
+  written if it is another solution (max |ΔQ| ≥ `--conv_thres` to the best search) with a higher
+  log-likelihood; otherwise the best search is written.
 
-The status line comes from the independent searches only. An earlier version let the runs take each other's
-states before every agreement test: on reindeer K = 11 (`--search=10 --conv 2/3`), 20 of 20 replicates then
-reported "converged", but only 2 were at the best solution, because the runs were made to agree. The mix is the
-best found, not a converged solution, and the log says so; to check it, run `--search` with other seeds and
-compare their Q with it.
+The status line ("Converged" / "Not converged") comes from the independent searches only. If they converged
+but the mix is a better solution, the log says so ("But the mix of the N searches is a better solution ...")
+and that the agreeing searches share a local optimum. The mix is the best found, not a converged solution; to
+check it, run `--search` with other seeds and compare their Q with it. Mixing always runs because agreement can
+be false: on reindeer K = 11, 3 independent searches agreed at −15,043,018.02, 26 below the best, which the
+mixing reached in 208 s (table below). An earlier version let the runs take each other's states before every
+agreement test: on reindeer K = 11 (`--search=10 --conv 2/3`), 20 of 20 replicates then reported "converged",
+but only 2 were at the best solution, because the runs were made to agree.
 
 Tests (reindeer, steve, 8 threads; standard run 22.5 s at K = 10 and 23.9 s at K = 11):
 
@@ -251,7 +255,8 @@ Tests (reindeer, steve, 8 threads; standard run 22.5 s at K = 10 and 23.9 s at K
 | K = 11, `--conv 6 --search -m 6`, seed 1 (cannot converge) | not converged; the mix (1 flip kept, 208 s) is the best solution, −15,042,991.78 (max \|ΔQ\| 6e-6) | 1,928 s (81×) |
 
 So agreement of independent searches is good evidence, not proof: at K = 11, three searches agreed on an
-optimum 26 units below the best, which the mixing of the same kind of searches reaches.
+optimum 26 units below the best, which the mixing of the same kind of searches reaches; so since 0.2.13 the
+searches are always mixed.
 
 **Limits.**
 * The search is local, and some optima cannot be left by any split-merge move. In the run that ended 23,402

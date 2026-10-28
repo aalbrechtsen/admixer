@@ -29,7 +29,7 @@
 #include "search.hpp"
 #include "svdstart.hpp"
 
-static const char* VERSION = "0.2.12";
+static const char* VERSION = "0.2.13";
 
 static void usage(int code) {
   std::printf(
@@ -75,9 +75,9 @@ static void usage(int code) {
       "                      another) from a random start, within a budget of X standard runs (default 20; it\n"
       "                      stops earlier after 6 rounds without an improvement); writes NAME.K.search (every\n"
       "                      move tried). For hard data (many local optima, large K); see DETAILS.md.\n"
-      "                      With --conv X: independent searches until X agree; if they do not, the searches\n"
-      "                      are mixed (single individuals' states, cross-flips) into one more result, which\n"
-      "                      is written if it is the best, and the log says it is not a converged solution\n"
+      "                      With --conv X: independent searches until X agree (or -m), then the searches are\n"
+      "                      mixed (single individuals' states, cross-flips) into one more result, which is\n"
+      "                      written if it is a better solution; the log then says it is not a converged one\n"
       "  --search-patience=R  stop a search after R rounds in a row without an improvement (default 6; 0 =\n"
       "                      use the whole budget, slower but safer)\n"
       "  --search-abort-frac=F  stop a refit after its warm-up if it is more than F |log L| below the current\n"
@@ -390,10 +390,12 @@ static void analyse(Data& D, Options& o, double t0) {
   // the convergence test is that of the independent runs (searches), before any mixing
   const int nrun = runs.size(), best_run = best;
   const char* unit = o.search ? "searches" : "runs";
-  if (o.search && o.conv > 0 && agreeing < o.conv && nrun > 1) {
-    // --conv --search, not converged: mix the searches. A copy of the best search takes single individuals' states
-    // from each other search it disagrees with (search.hpp, cross_flip), repeated while any flip is kept (at most
-    // 3 passes), then polished to -C. The searches are left as they are; the mix is one more result.
+  QDistance d_mix;  // the mix's distance to the best search
+  if (o.search && o.conv > 0 && nrun > 1) {
+    // --conv --search: mix the searches, converged or not (agreeing searches can share a local optimum). A copy of
+    // the best search takes single individuals' states from each other search it disagrees with (search.hpp,
+    // cross_flip), repeated while any flip is kept (at most 3 passes), then polished to -C. The searches are left as
+    // they are; the mix is one more result.
     say("Mixing: %d of %d searches agree with the best search (seed %lu); mixing them (cross-flips)\n",
         agreeing, nrun, runs[best].seed);
     const double t_mix = omp_get_wtime();
@@ -418,10 +420,12 @@ static void analyse(Data& D, Options& o, double t0) {
     Run mr{0, fm.loglik, omp_get_wtime() - t_mix, fm.iterations, std::vector<float>(xm.begin() + m.nP, xm.end()),
            QDistance(), false, true};
     runs.push_back(std::move(mr));
-    if (fm.loglik > runs[best].loglik) best = nrun, best_x = xm;
-    say("Mixing the %d searches: %d flips kept, loglik %f (%+.2f over the best search), %.1f sec; %s\n", nrun, kept,
-        fm.loglik, fm.loglik - runs[best_run].loglik, runs.back().seconds,
-        best == nrun ? "written as the result" : "the best search is written");
+    d_mix = q_distance(runs.back().Q.data(), runs[best_run].Q.data(), D.N, K);
+    // the mix replaces the best search only if it is another solution with a higher log-likelihood
+    if (fm.loglik > runs[best].loglik && d_mix.max_abs >= o.conv_thres) best = nrun, best_x = xm;
+    say("Mixing the %d searches: %d flips kept, loglik %f (%+.2f over the best search, max |dQ| %.4f), %.1f sec; %s\n",
+        nrun, kept, fm.loglik, fm.loglik - runs[best_run].loglik, d_mix.max_abs, runs.back().seconds,
+        best == nrun ? "written as the result" : "the same solution as the best search, which is written");
     for (auto& u : runs) {
       u.d = q_distance(u.Q.data(), runs[best].Q.data(), D.N, K);
       u.agrees = u.d.max_abs < o.conv_thres;
@@ -434,11 +438,16 @@ static void analyse(Data& D, Options& o, double t0) {
     say("%s: %d of %d %s agree with the best %s (seed %lu, max |dQ| < %g)\n",
         agreeing >= o.conv ? "Converged" : "Not converged", agreeing, nrun, unit,
         o.search ? "search" : "run", runs[best_run].seed, o.conv_thres);
-    if (best != best_run || (int)runs.size() > nrun) {
+    if (best != best_run && agreeing >= o.conv)
+      say("But the mix of the %d searches is a better solution (%+.2f, max |dQ| %.4f to the best search): the\n"
+          "agreeing searches share a local optimum. The mix is written; it is the best found, not a converged solution.\n"
+          "To check it, run --search with other seeds (e.g. -s %lu, -s %lu) and compare their Q with this one (same\n"
+          "solution: max |dQ| < %g)\n", nrun, runs[best].loglik - runs[best_run].loglik, d_mix.max_abs,
+          fs.seed + nrun, fs.seed + nrun + 1, o.conv_thres);
+    else if (best != best_run)
       say("The result is the mix of the %d searches, the best found but not a converged solution. To check it, run\n"
           "--search with other seeds (e.g. -s %lu, -s %lu) and compare their Q with this one (same solution: max |dQ|\n"
           "< %g)\n", nrun, fs.seed + nrun, fs.seed + nrun + 1, o.conv_thres);
-    }
     const std::string fn = o.out + "." + std::to_string(K) + ".conv";
     FILE* fp = std::fopen(fn.c_str(), "w");
     if (!fp) throw std::runtime_error("cannot write " + fn);

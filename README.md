@@ -24,7 +24,7 @@ Details beyond everyday use (algorithms, performance, testing, differences from 
 
 Nothing else needs to be installed: OpenBLAS, zlib and the C++/OpenMP runtimes are built in. It runs on any
 x86_64 Linux with glibc 2.28 or newer (RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 10+), and uses AVX2 or
-AVX-512 when the CPU has it. The binary in `bin/` is the current version (0.2.12).
+AVX-512 when the CPU has it. The binary in `bin/` is the current version (0.2.13).
 
 ```
 wget https://github.com/aalbrechtsen/admixer/raw/main/bin/admixer-linux-x86_64.tar.gz
@@ -150,9 +150,10 @@ Example: `admixer --search data.bed 11`
 
 **Is the search's result the best solution?** Use `--conv X --search`: independent searches (seeds `--seed`,
 `--seed`+1, ...), each from its own random start, until X of them agree with the best (as `--conv`; at most
-`--max_runs`). If they do not converge, the searches are mixed: a copy of the best search takes single
-individuals' states from the others when that raises the log-likelihood (cross-flips). The mix is written if it
-is the best result, and `data.K.conv` lists it as an extra row, `mix`. The log then says the result is the best
+`--max_runs`). Then the searches are mixed, converged or not: a copy of the best search takes single
+individuals' states from the others when that raises the log-likelihood (cross-flips). `data.K.conv` lists the
+mix as an extra row, `mix`. The mix is written only if it is another solution (max |dQ| ≥ `--conv_thres`) with
+a higher log-likelihood; the log then says the result is the best
 found but not a converged solution. Each search costs 6–20 standard runs, so `--conv 3 --search` costs at least
 3 searches; a smaller `-m` (e.g. 5) limits the cost.
 
