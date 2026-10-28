@@ -253,10 +253,13 @@ Tests (reindeer, steve, 8 threads; standard run 22.5 s at K = 10 and 23.9 s at K
 | K = 10, `--conv 3 --search`, seeds 1 and 101 | converged after 3 and 4 searches, at the best solution (max \|ΔQ\| < 1e-4) | 490 s (22×) |
 | K = 11, `--conv 3 --search`, seeds 1 and 101 | converged after 7 and 9 searches, at −15,043,018.02: 26 below the best, 2 individuals differ (max \|ΔQ\| 0.058) | 1,894–1,955 s (80×) |
 | K = 11, `--conv 6 --search -m 6`, seed 1 (cannot converge) | not converged; the mix (1 flip kept, 208 s) is the best solution, −15,042,991.78 (max \|ΔQ\| 6e-6) | 1,928 s (81×) |
+| K = 11, 0.2.13 (always mixed), `--conv 3 --search`, seed 1 | converged after 7 searches at −15,043,018.02; the mix (1 flip kept, 202 s) is the best solution, −15,042,991.78, and is written | 1,997 s (84×) |
+| K = 11, 0.2.13 (always mixed), `--conv 3 --search`, seed 101 | converged after 9 searches at −15,043,018.02; the mix kept no flip (162 s), so the result stays 26 below the best | 2,009 s (84×) |
 
 So agreement of independent searches is good evidence, not proof: at K = 11, three searches agreed on an
 optimum 26 units below the best, which the mixing of the same kind of searches reaches; so since 0.2.13 the
-searches are always mixed.
+searches are always mixed. The mixing reaches the best only when one of the searches holds the right states:
+with seed 1 it did (one search had them), with seed 101 none of the 9 searches did.
 
 **Limits.**
 * The search is local, and some optima cannot be left by any split-merge move. In the run that ended 23,402
